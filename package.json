@@ -1,0 +1,33 @@
+{
+  "name": "okta-jag-token-exchange",
+  "version": "1.0.0",
+  "description": "Consolidated application for Okta JAG token exchange flow",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "nodemon index.js"
+  },
+  "keywords": [
+    "okta",
+    "oauth",
+    "oidc",
+    "jwt",
+    "jag",
+    "token-exchange",
+    "authentication"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "axios": "^1.6.0",
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2",
+    "jose": "^5.1.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  },
+  "engines": {
+    "node": ">=14.0.0"
+  }
+}
