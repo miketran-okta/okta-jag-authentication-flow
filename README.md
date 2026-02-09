@@ -13,7 +13,6 @@ This application consolidates the entire token exchange flow into one seamless e
 5. **Results Display**: Shows all tokens, decoded payloads, and metadata in a beautiful UI
 
 ![Token Exchange Flow](token-exchange.png)
-*The app displays each step of the token exchange with detailed request/response information*
 
 ## 🚀 Quick Start
 
@@ -24,6 +23,7 @@ This application consolidates the entire token exchange flow into one seamless e
   - OIDC application configured
   - AI Agent client registered
   - Resource authorization server set up
+  - See [Okta AI Agent Token Exchange Guide](https://developer.okta.com/docs/guides/ai-agent-token-exchange/service-account/main/) for more details along with instructions on how to [Register an AI Agent](https://help.okta.com/oie/en-us/content/topics/ai-agents/ai-agent-register.htm)
 
 ### Installation
 
@@ -239,7 +239,6 @@ Both are signed with RS256 using your agent's private key.
 
 ## 📚 Additional Resources
 
-- [Okta AI Agent Token Exchange Guide](https://developer.okta.com/docs/guides/ai-agent-token-exchange/service-account/main/) - Official documentation on the token exchange flow from Okta's perspective
 - [Okta JWT-Based Authentication for AI Agents](https://developer.okta.com/)
 - [OAuth 2.0 Token Exchange RFC 8693](https://datatracker.ietf.org/doc/html/rfc8693)
 - [OpenID Connect Core](https://openid.net/specs/openid-connect-core-1_0.html)
