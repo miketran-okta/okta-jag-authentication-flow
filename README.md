@@ -20,10 +20,14 @@ This application consolidates the entire token exchange flow into one seamless e
 
 - Node.js 14+ installed
 - An Okta account with:
+  - IGA_RESOURCE_OWNERS feature flag enabled
   - OIDC application configured
-  - AI Agent client registered
-  - Resource authorization server set up
-  - See [Okta AI Agent Token Exchange Guide](https://developer.okta.com/docs/guides/ai-agent-token-exchange/service-account/main/) for more details along with instructions on how to [Register an AI Agent](https://help.okta.com/oie/en-us/content/topics/ai-agents/ai-agent-register.htm)
+  - [AI Agent client registered](https://help.okta.com/oie/en-us/content/topics/ai-agents/ai-agent-register.htm)
+  - Custom API AM authorization server configured for the resource
+    - Ensure a policy is assigned to the AI agent (not the OIDC app) and a rule with *JWT Bearer* is enabled
+  - The AI Agent has a manged connection to the authorization server.  See [Connect an AI agent to an authorization server](https://help.okta.com/oie/en-us/content/topics/ai-agents/ai-agent-auth-server.htm)
+
+See [Okta AI Agent Token Exchange Guide](https://developer.okta.com/docs/guides/ai-agent-token-exchange/service-account/main/) for the complete architecture flow
 
 ### Installation
 
