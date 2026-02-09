@@ -1,6 +1,6 @@
-# Okta JAG Token Exchange - Consolidated Application
+# Okta JAG Token Exchange (Cross App Access) - Consolidated Application
 
-A single-page Node.js application that automates the complete Okta JAG (JWT-Based Access Grant) token exchange flow, from user authentication to final access token acquisition.
+A single-page Node.js application that automates the complete Okta JAG (JWT-Based Access Grant) token exchange flow aka Cross-App Access, from user authentication to final access token acquisition.
 
 ## 🎯 What This App Does
 
@@ -11,6 +11,9 @@ This application consolidates the entire token exchange flow into one seamless e
 3. **JAG Token Exchange**: Automatically exchanges ID token for JAG-ID token
 4. **Access Token Exchange**: Automatically exchanges JAG-ID token for final access token
 5. **Results Display**: Shows all tokens, decoded payloads, and metadata in a beautiful UI
+
+![Token Exchange Flow](token-exchange.png)
+*The app displays each step of the token exchange with detailed request/response information*
 
 ## 🚀 Quick Start
 
@@ -48,7 +51,7 @@ Edit `.env` with your Okta configuration:
 
 3. **Run the application:**
 ```bash
-node consolidated-auth-app.js
+node index.js
 ```
 
 4. **Open your browser:**
@@ -223,7 +226,7 @@ Both are signed with RS256 using your agent's private key.
 ## 🧪 Testing
 
 ### Test the Complete Flow
-1. Start the server: `node consolidated-auth-app.js`
+1. Start the server: `node index.js`
 2. Visit `http://localhost:3000`
 3. Click "Start Authentication"
 4. Log in with your Okta credentials
@@ -236,6 +239,7 @@ Both are signed with RS256 using your agent's private key.
 
 ## 📚 Additional Resources
 
+- [Okta AI Agent Token Exchange Guide](https://developer.okta.com/docs/guides/ai-agent-token-exchange/service-account/main/) - Official documentation on the token exchange flow from Okta's perspective
 - [Okta JWT-Based Authentication for AI Agents](https://developer.okta.com/)
 - [OAuth 2.0 Token Exchange RFC 8693](https://datatracker.ietf.org/doc/html/rfc8693)
 - [OpenID Connect Core](https://openid.net/specs/openid-connect-core-1_0.html)
