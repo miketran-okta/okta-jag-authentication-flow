@@ -1,13 +1,13 @@
 # Okta AI Agent Token Exchange Demo
 
-A hands-on demo application designed to help Sales Engineers learn and demonstrate Okta's new AI Agent capabilities, including the **AI Agent Registry** and **Managed Connections** for secure token exchange.
+A hands-on demo application designed to help Solutions Engineers learn and demonstrate Okta's new AI Agent capabilities, including the **AI Agent Registry** and **Managed Connections** for secure token exchange using **Cross App Access**.
 
 ## 🎯 Purpose
 
 This demo helps you understand and showcase:
-- **AI Agent Registry**: How to register and manage AI agents as first-class OAuth clients
-- **Managed Connections**: Secure authentication between AI agents and authorization servers using JWT client assertions
-- **Token Exchange Flow**: The complete JAG (JWT-Based Access Grant) token exchange from user authentication to resource access
+- **AI Agent Registry**: How to register and manage AI agents as first-class citizen within Okta's Universal Directory
+- **Managed Connections**: Secure authentication between AI agents and downstream tools through authorization servers using JWT client assertions
+- **Cross App Access and Token Exchange Flow**: The complete JAG (JWT-Based Access Grant) token exchange from user authentication to resource access
 
 ![Token Exchange Flow](token-exchange.png)
 *Live demo showing the three-step token exchange process*
@@ -54,15 +54,14 @@ Before running the demo, configure your Okta org with the following components:
 3. **Configure a Custom Authorization Server** (for the resource)
    - Go to **Security** > **API** > **Authorization Servers**
    - Create or use an existing custom authorization server
-   - Note the Authorization Server ID and token endpoint
-
-4. **Create a Managed Connection**
-   - Connect your AI Agent to the custom authorization server
-   - Go to the AI Agent settings and add the authorization server
    - Configure an access policy:
      - Assign the policy to the **AI Agent** (not the OIDC app)
      - Add a rule with **JWT Bearer** grant type enabled
    - 📚 [Connect an AI agent to an authorization server](https://help.okta.com/oie/en-us/content/topics/ai-agents/ai-agent-auth-server.htm)
+   - Note the Authorization Server ID and token endpoint
+
+4. **Create a Managed Connection**
+   - Connect your AI Agent to the custom authorization server under the Agent's Managed Connections tab   
 
 **Key Learning Point**: The managed connection establishes trust between your AI agent and the authorization server, enabling secure token exchange without traditional OAuth secrets.
 
@@ -130,27 +129,6 @@ http://localhost:3000
    - **ID Token**: User identity from Okta
    - **JAG-ID Token**: Intermediate token proving agent authorization
    - **Access Token**: Final token for accessing the resource
-
-### What to Show SEs
-
-**Focus on these key concepts:**
-
-1. **AI Agent Registry**
-   - Show where AI agents are managed in the Admin Console
-   - Explain how they're OAuth clients with cryptographic credentials
-   - Highlight the public key registration process
-
-2. **Managed Connections**
-   - Demonstrate the trust relationship between agent and auth server
-   - Show the policy configuration that authorizes the agent
-   - Explain JWT Bearer grant type requirement
-
-3. **Token Exchange Flow**
-   - Walk through each step in the UI
-   - Show the decoded JWT payloads
-   - Highlight the client assertion authentication mechanism
-
----
 
 ## 📋 How It Works
 
