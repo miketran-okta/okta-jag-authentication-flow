@@ -39,17 +39,18 @@ Before running the demo, configure your Okta org with the following components:
 
 #### 📋 Configuration Checklist
 
-1. **Register an AI Agent**
-   - Navigate to **Applications** > **AI Agents** in your Okta Admin Console
-   - Create a new AI agent and generate a public/private key pair
-   - Save the Client ID, Key ID, and private key (JWK format)
-   - 📚 [How to register an AI Agent](https://help.okta.com/oie/en-us/content/topics/ai-agents/ai-agent-register.htm)
-
-2. **Create an OIDC Application** (for user authentication)
+1. **Create an OIDC Application** (for user authentication)
    - Go to **Applications** > **Applications** > **Create App Integration**
    - Choose **OIDC - OpenID Connect** and **Web Application**
    - Configure redirect URI: `http://localhost:3000/callback`
    - Save the Client ID and Client Secret
+   
+2. **Register an AI Agent**
+   - Navigate to **Applications** > **AI Agents** in your Okta Admin Console
+   - Create a new AI agent and generate a public/private key pair
+   - Link the OIDC application
+   - Save the Client ID, Key ID, and private key (JWK format)
+   - 📚 [How to register an AI Agent](https://help.okta.com/oie/en-us/content/topics/ai-agents/ai-agent-register.htm)
 
 3. **Configure a Custom Authorization Server** (for the resource)
    - Go to **Security** > **API** > **Authorization Servers**
@@ -124,11 +125,12 @@ http://localhost:3000
 ### Quick Demo Flow
 1. Click **"Start Authentication"** to initiate login
 2. Authenticate with your Okta credentials
-3. Watch the automatic token exchanges happen
+3. Watch the Cross-App access token exchange 
 4. Explore the three tokens acquired:
    - **ID Token**: User identity from Okta
    - **JAG-ID Token**: Intermediate token proving agent authorization
    - **Access Token**: Final token for accessing the resource
+5. Optionally: demonstrate AI Agent access control by revoking OAuth scopes or modifying user/group assignments within the Okta Custom Authorization Server.
 
 ## 📋 How It Works
 

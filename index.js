@@ -55,6 +55,72 @@ function decodeJWT(token) {
   }
 }
 
+// Utility: Generate human-friendly error message based on HTTP status and step
+function getHumanFriendlyError(httpStatus, failedStepName, errorDetails) {
+  if (!httpStatus) {
+    return {
+      title: 'Connection Error',
+      description: 'Unable to connect to the authorization server. Please check your network connection and configuration.',
+      icon: '🔌'
+    };
+  }
+
+  switch (httpStatus) {
+    case 400:
+      // Check for specific error types in the response
+      if (errorDetails?.error === 'invalid_grant') {
+        return {
+          title: 'Invalid Token or Grant',
+          description: `The ${failedStepName} failed because the provided token or grant was invalid or expired. This could indicate a misconfigured token exchange or an expired assertion.`,
+          icon: '⏰'
+        };
+      }
+      return {
+        title: 'Bad Request',
+        description: `The ${failedStepName} request was malformed or contained invalid parameters. Check your configuration settings.`,
+        icon: '⚠️'
+      };
+
+    case 401:
+      return {
+        title: 'Access Denied by Authorization Policy',
+        description: `The MCP authorization server denied the ${failedStepName} request due to the client having insufficient permissions while attempting to access the protected resource.`,
+        icon: '🚫'
+      };
+
+    case 403:
+      return {
+        title: 'Forbidden',
+        description: `The ${failedStepName} was rejected due to insufficient permissions. The client may not be authorized to perform this action.`,
+        icon: '🔒'
+      };
+
+    case 404:
+      return {
+        title: 'Endpoint Not Found',
+        description: `The ${failedStepName} endpoint was not found. Verify that your OKTA_ISSUER and RESOURCE_TOKEN_ENDPOINT configuration values are correct.`,
+        icon: '❓'
+      };
+
+    case 500:
+    case 502:
+    case 503:
+    case 504:
+      return {
+        title: 'Server Error',
+        description: `The authorization server encountered an error while processing the ${failedStepName}. This is typically a temporary issue. Please try again.`,
+        icon: '🔥'
+      };
+
+    default:
+      return {
+        title: `Error (HTTP ${httpStatus})`,
+        description: `The ${failedStepName} failed with HTTP status ${httpStatus}. Check the error details below for more information.`,
+        icon: '❌'
+      };
+  }
+}
+
 // Helper: Create client assertion for JAG exchange
 async function createJAGClientAssertion() {
   if (!config.agentPrivateKeyJwk) {
@@ -604,13 +670,68 @@ ${JSON.stringify({
       console.error('Response Status:', error.response.status);
       console.error('Response Data:', JSON.stringify(error.response.data, null, 2));
     }
-    
+
+    // Determine which step failed based on what tokens we have
+    let failedStep = 1;
+    let failedStepName = 'ID Token Exchange';
+    let failedEndpoint = `${config.issuer}/oauth2/v1/token`;
+
+    if (results.tokens.idToken && !results.tokens.jagToken) {
+      failedStep = 2;
+      failedStepName = 'JAG-ID Token Exchange';
+      failedEndpoint = `${config.issuer}/oauth2/v1/token`;
+    } else if (results.tokens.jagToken && !results.tokens.accessToken) {
+      failedStep = 3;
+      failedStepName = 'Access Token Exchange';
+      failedEndpoint = config.resourceTokenEndpoint;
+    }
+
+    // Capture the failed request details if available
+    let failedRequest = null;
+    if (error.config) {
+      const requestUrl = new URL(error.config.url);
+      const requestHost = requestUrl.host;
+      const requestPath = requestUrl.pathname;
+
+      failedRequest = {
+        method: error.config.method.toUpperCase(),
+        url: error.config.url,
+        headers: error.config.headers,
+        body: error.config.data || '',
+        raw: `${error.config.method.toUpperCase()} ${requestPath} HTTP/1.1
+Host: ${requestHost}
+Content-Type: ${error.config.headers['Content-Type'] || 'application/x-www-form-urlencoded'}
+
+${error.config.data || ''}`
+      };
+    }
+
+    // Capture the error response
+    let errorResponse = null;
+    if (error.response) {
+      errorResponse = {
+        status: error.response.status,
+        statusText: error.response.statusText,
+        data: error.response.data,
+        raw: `HTTP/1.1 ${error.response.status} ${error.response.statusText}
+Content-Type: application/json
+
+${JSON.stringify(error.response.data, null, 2)}`
+      };
+    }
+
     results.errors.push({
       message: error.message,
       details: error.response?.data || null,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
+      httpStatus: error.response?.status,
+      failedStep: failedStep,
+      failedStepName: failedStepName,
+      failedEndpoint: failedEndpoint,
+      request: failedRequest,
+      response: errorResponse
     });
-    
+
     sessions.delete(state);
     res.status(500).send(generateErrorHTML(results));
   }
@@ -618,6 +739,13 @@ ${JSON.stringify({
 
 // Generate Results HTML
 function generateResultsHTML(results) {
+  // Extract contextual information for the success description
+  const userEmail = results.tokens.idToken?.payload?.email || results.tokens.idToken?.payload?.sub || 'Unknown User';
+  const userSub = results.tokens.idToken?.payload?.sub || 'N/A';
+  const agentClientId = config.agentClientId || 'N/A';
+  const finalScope = results.tokens.accessToken?.scope || 'N/A';
+  const targetAudience = results.tokens.accessToken?.payload?.aud || 'N/A';
+
   return `
     <!DOCTYPE html>
     <html>
@@ -645,10 +773,17 @@ function generateResultsHTML(results) {
           border-radius: 10px;
           margin-bottom: 20px;
           box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+          border-left: 6px solid #4caf50;
         }
         .header h1 {
           color: #333;
           margin-bottom: 10px;
+          display: flex;
+          align-items: center;
+          gap: 10px;
+        }
+        .success-icon {
+          font-size: 36px;
         }
         .success-badge {
           display: inline-block;
@@ -657,6 +792,24 @@ function generateResultsHTML(results) {
           padding: 8px 16px;
           border-radius: 20px;
           font-weight: bold;
+          font-size: 14px;
+          margin-top: 10px;
+        }
+        .success-description {
+          background: #d4edda;
+          border-left: 4px solid #28a745;
+          padding: 15px;
+          margin-top: 15px;
+          border-radius: 4px;
+        }
+        .success-description h3 {
+          color: #155724;
+          margin-bottom: 8px;
+          font-size: 16px;
+        }
+        .success-description p {
+          color: #155724;
+          line-height: 1.5;
           font-size: 14px;
         }
         .timeline {
@@ -802,10 +955,38 @@ function generateResultsHTML(results) {
     <body>
       <div class="container">
         <div class="header">
-          <h1>🎉 Token Flow Completed Successfully</h1>
-          <span class="success-badge">All Steps Completed</span>
+          <h1>
+            <span class="success-icon">✅</span>
+            Access Granted Successfully
+          </h1>
+          <span class="success-badge">Success</span>
+
+          <div class="success-description">            
+            <p>The full Cross App Access token exchange flow was successful. The user was authenticated via Okta by the application, the AI agent exchanged the ID token for a JAG-ID token, and finally received an access token from the MCP authorization server to access the protected resource.</p>
+
+            <div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid #c3e6cb;">
+              <strong style="display: block; margin-bottom: 8px;">Context:</strong>
+              <div style="display: grid; grid-template-columns: auto 1fr; gap: 8px 12px; font-size: 13px;">
+                <span style="font-weight: 600;">👤 User:</span>
+                <span>${userEmail}${userSub !== 'N/A' && userSub !== userEmail ? ` (${userSub})` : ''}</span>
+
+                <span style="font-weight: 600;">🤖 Agent:</span>
+                <span>${agentClientId}</span>
+
+                ${finalScope !== 'N/A' ? `
+                  <span style="font-weight: 600;">🎯 Granted Scope:</span>
+                  <span>${finalScope}</span>
+                ` : ''}
+
+                ${targetAudience !== 'N/A' ? `
+                  <span style="font-weight: 600;">🎫 Token Audience:</span>
+                  <span>${targetAudience}</span>
+                ` : ''}
+              </div>
+            </div>
+          </div>
         </div>
-        
+
         <div class="timeline">
           <!-- Step 1: ID Token -->
           <div class="step">
@@ -986,115 +1167,374 @@ function generateResultsHTML(results) {
 
 // Generate Error HTML
 function generateErrorHTML(results) {
-  const lastSuccessfulStep = results.steps.length;
   const error = results.errors[0];
-  
+  const friendlyError = getHumanFriendlyError(error.httpStatus, error.failedStepName, error.details);
+
+  // Extract contextual information for the error description
+  const userEmail = results.tokens.idToken?.payload?.email || results.tokens.idToken?.payload?.sub || 'Unknown User';
+  const userSub = results.tokens.idToken?.payload?.sub || 'N/A';
+  const agentClientId = config.agentClientId || 'N/A';
+
+  // Determine what was being requested based on the failed step
+  let requestedScope = 'N/A';
+  let requestedAudience = 'N/A';
+
+  if (error.failedStep === 2) {
+    // JAG Token Exchange
+    requestedScope = config.jagScope || 'ai_agent';
+    requestedAudience = config.jagTargetAudience || 'N/A';
+  } else if (error.failedStep === 3) {
+    // Access Token Exchange
+    requestedScope = results.tokens.jagToken?.scope || 'N/A';
+    requestedAudience = results.tokens.jagToken?.payload?.aud || 'N/A';
+  }
+
+  // Build tokens section HTML showing all successfully acquired tokens
+  let tokensHTML = '';
+
+  // Show ID Token if acquired
+  if (results.tokens.idToken) {
+    tokensHTML += `
+      <div class="step">
+        <h2>Step 1: ID Token Acquired ✓</h2>
+        <div class="step-meta">
+          Endpoint: ${results.steps[0].endpoint}<br>
+          Time: ${results.steps[0].timestamp}
+        </div>
+
+        <div class="token-section">
+          <h3>
+            🔑 ID Token
+            <button class="copy-btn" onclick="copyToClipboard('${results.tokens.idToken.token}')">Copy</button>
+          </h3>
+          <div class="token-display">${results.tokens.idToken.token}</div>
+
+          <h3>📄 Decoded Payload</h3>
+          <div class="payload-display"><pre>${JSON.stringify(results.tokens.idToken.payload, null, 2)}</pre></div>
+        </div>
+      </div>
+    `;
+  }
+
+  // Show JAG Token if acquired
+  if (results.tokens.jagToken) {
+    tokensHTML += `
+      <div class="step">
+        <h2>Step 2: JAG-ID Token Acquired ✓</h2>
+        <div class="step-meta">
+          Endpoint: ${results.steps[1].endpoint}<br>
+          Time: ${results.steps[1].timestamp}
+        </div>
+
+        <div class="token-section">
+          <h3>
+            🔐 JAG Client Assertion
+            <button class="copy-btn" onclick="copyToClipboard('${results.tokens.jagClientAssertion.token}')">Copy</button>
+          </h3>
+          <div class="token-display">${results.tokens.jagClientAssertion.token}</div>
+          <div class="payload-display"><pre>${JSON.stringify(results.tokens.jagClientAssertion.payload, null, 2)}</pre></div>
+        </div>
+
+        <div class="token-section">
+          <h3>
+            🎫 JAG-ID Token
+            <button class="copy-btn" onclick="copyToClipboard('${results.tokens.jagToken.token}')">Copy</button>
+          </h3>
+          <div class="token-display">${results.tokens.jagToken.token}</div>
+
+          <h3>📄 Decoded Payload</h3>
+          <div class="payload-display"><pre>${JSON.stringify(results.tokens.jagToken.payload, null, 2)}</pre></div>
+        </div>
+      </div>
+    `;
+  }
+
   return `
     <!DOCTYPE html>
     <html>
     <head>
       <title>Token Flow Error</title>
       <style>
+        * {
+          margin: 0;
+          padding: 0;
+          box-sizing: border-box;
+        }
         body {
-          font-family: Arial, sans-serif;
-          max-width: 900px;
-          margin: 50px auto;
+          font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+          background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
           padding: 20px;
-          background: #f5f5f5;
+          min-height: 100vh;
         }
         .container {
-          background: white;
-          padding: 30px;
-          border-radius: 8px;
-          box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+          max-width: 1200px;
+          margin: 0 auto;
         }
         .error-header {
-          background: #f44336;
-          color: white;
-          padding: 20px;
-          border-radius: 6px;
+          background: white;
+          padding: 30px;
+          border-radius: 10px;
           margin-bottom: 20px;
+          box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+          border-left: 6px solid #f44336;
         }
         .error-header h1 {
-          margin: 0 0 10px 0;
+          color: #333;
+          margin-bottom: 10px;
+          display: flex;
+          align-items: center;
+          gap: 10px;
         }
-        .step-status {
+        .error-icon {
+          font-size: 36px;
+        }
+        .error-badge {
+          display: inline-block;
+          background: #f44336;
+          color: white;
+          padding: 8px 16px;
+          border-radius: 20px;
+          font-weight: bold;
+          font-size: 14px;
+          margin-top: 10px;
+        }
+        .error-description {
+          background: #fff3cd;
+          border-left: 4px solid #ffc107;
+          padding: 15px;
+          margin-top: 15px;
+          border-radius: 4px;
+        }
+        .error-description h3 {
+          color: #856404;
+          margin-bottom: 8px;
+          font-size: 16px;
+        }
+        .error-description p {
+          color: #856404;
+          line-height: 1.5;
+          font-size: 14px;
+        }
+        .timeline {
+          position: relative;
+          padding-left: 40px;
           margin: 20px 0;
         }
+        .timeline::before {
+          content: '';
+          position: absolute;
+          left: 15px;
+          top: 0;
+          bottom: 0;
+          width: 2px;
+          background: rgba(255,255,255,0.3);
+        }
         .step {
+          background: white;
+          padding: 20px;
+          border-radius: 8px;
+          margin-bottom: 20px;
+          box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+          position: relative;
+        }
+        .step::before {
+          content: '✓';
+          position: absolute;
+          left: -32px;
+          top: 20px;
+          width: 30px;
+          height: 30px;
+          border-radius: 50%;
+          background: #4caf50;
+          color: white;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          font-weight: bold;
+          font-size: 16px;
+        }
+        .step.failed::before {
+          content: '✗';
+          background: #f44336;
+        }
+        .step h2 {
+          color: #333;
+          margin-bottom: 10px;
+          font-size: 20px;
+        }
+        .step-meta {
+          color: #666;
+          font-size: 13px;
+          margin-bottom: 15px;
+        }
+        .token-section {
+          background: #f8f9fa;
           padding: 15px;
-          margin: 10px 0;
+          border-radius: 6px;
+          margin-top: 15px;
+        }
+        .token-section h3 {
+          color: #495057;
+          font-size: 16px;
+          margin-bottom: 10px;
+          display: flex;
+          align-items: center;
+          gap: 8px;
+        }
+        .copy-btn {
+          background: #007bff;
+          color: white;
+          border: none;
+          padding: 4px 12px;
           border-radius: 4px;
-          border-left: 4px solid #ccc;
+          cursor: pointer;
+          font-size: 12px;
+          transition: background 0.2s;
         }
-        .step.success {
-          background: #e8f5e9;
-          border-left-color: #4caf50;
+        .copy-btn:hover {
+          background: #0056b3;
         }
-        .step.error {
-          background: #ffebee;
-          border-left-color: #f44336;
+        .token-display {
+          background: #fff;
+          padding: 12px;
+          border-radius: 4px;
+          border: 1px solid #dee2e6;
+          font-family: 'Courier New', monospace;
+          font-size: 12px;
+          word-break: break-all;
+          max-height: 100px;
+          overflow-y: auto;
+          margin-bottom: 10px;
+        }
+        .payload-display {
+          background: #fff;
+          padding: 12px;
+          border-radius: 4px;
+          border: 1px solid #dee2e6;
+          font-family: 'Courier New', monospace;
+          font-size: 11px;
+          max-height: 200px;
+          overflow-y: auto;
         }
         .error-details {
-          background: #f5f5f5;
+          background: #f8f9fa;
           padding: 15px;
-          border-radius: 4px;
-          margin: 15px 0;
-          font-family: monospace;
-          font-size: 12px;
-          overflow-x: auto;
+          border-radius: 6px;
+          margin-top: 15px;
+        }
+        .error-details h3 {
+          color: #495057;
+          font-size: 16px;
+          margin-bottom: 10px;
         }
         pre {
           margin: 0;
           white-space: pre-wrap;
+          word-wrap: break-word;
+          background: #fff;
+          padding: 12px;
+          border-radius: 4px;
+          border: 1px solid #dee2e6;
+          font-family: 'Courier New', monospace;
+          font-size: 11px;
+          max-height: 300px;
+          overflow-y: auto;
         }
         .back-button {
           display: inline-block;
           margin-top: 20px;
           padding: 12px 24px;
-          background: #007bff;
-          color: white;
+          background: white;
+          color: #667eea;
           text-decoration: none;
-          border-radius: 4px;
+          border-radius: 6px;
           font-weight: bold;
+          transition: transform 0.2s;
         }
         .back-button:hover {
-          background: #0056b3;
+          transform: translateY(-2px);
+          box-shadow: 0 4px 8px rgba(0,0,0,0.2);
         }
       </style>
     </head>
     <body>
       <div class="container">
         <div class="error-header">
-          <h1>❌ Token Flow Error</h1>
-          <p>An error occurred during step ${lastSuccessfulStep + 1}</p>
-        </div>
-        
-        <div class="step-status">
-          <h2>Flow Progress:</h2>
-          ${results.steps.map((step, i) => `
-            <div class="step success">
-              <strong>✓ Step ${step.step}: ${step.name}</strong><br>
-              <small>${step.timestamp}</small>
+          <h1>
+            <span class="error-icon">${friendlyError.icon}</span>
+            ${friendlyError.title}
+          </h1>
+          <span class="error-badge">Access Denied</span>
+
+          <div class="error-description">
+            
+            <p>${friendlyError.description}</p>
+
+            <div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid #ffeaa7;">
+              <strong style="display: block; margin-bottom: 8px;">Context:</strong>
+              <div style="display: grid; grid-template-columns: auto 1fr; gap: 8px 12px; font-size: 13px;">
+                <span style="font-weight: 600;">👤 User:</span>
+                <span>${userEmail}${userSub !== 'N/A' && userSub !== userEmail ? ` (${userSub})` : ''}</span>
+
+                <span style="font-weight: 600;">🤖 Agent:</span>
+                <span>${agentClientId}</span>
+
+                ${requestedScope !== 'N/A' ? `
+                  <span style="font-weight: 600;">🎯 Requested Scope:</span>
+                  <span>${requestedScope}</span>
+                ` : ''}
+
+                ${requestedAudience !== 'N/A' ? `
+                  <span style="font-weight: 600;">🎫 Target Audience:</span>
+                  <span>${requestedAudience}</span>
+                ` : ''}
+              </div>
             </div>
-          `).join('')}
-          <div class="step error">
-            <strong>✗ Step ${lastSuccessfulStep + 1}: Failed</strong><br>
-            <small>${error.timestamp}</small>
           </div>
         </div>
-        
-        <h2>Error Details:</h2>
-        <div class="error-details">
-          <strong>Message:</strong> ${error.message}<br>
-          ${error.details ? `
-            <br><strong>Server Response:</strong>
-            <pre>${JSON.stringify(error.details, null, 2)}</pre>
-          ` : ''}
+
+        <div class="timeline">
+          ${tokensHTML}
+
+          <!-- Failed Step -->
+          <div class="step failed">
+            <h2>Step ${error.failedStep}: ${error.failedStepName} ✗</h2>
+            <div class="step-meta">
+              Endpoint: ${error.failedEndpoint}<br>
+              Time: ${error.timestamp}
+            </div>
+
+            ${error.request ? `
+              <div class="error-details">
+                <h3>📤 HTTP Request (Failed)</h3>
+                <pre>${error.request.raw}</pre>
+              </div>
+            ` : ''}
+
+            ${error.response ? `
+              <div class="error-details">
+                <h3>📥 Error Response (HTTP ${error.response.status})</h3>
+                <pre>${error.response.raw}</pre>
+              </div>
+            ` : `
+              <div class="error-details">
+                <h3>Error Details</h3>
+                <pre>${error.message}</pre>
+              </div>
+            `}
+          </div>
         </div>
-        
-        <a href="/" class="back-button">← Back to Home</a>
+
+        <a href="/" class="back-button">← Start New Flow</a>
       </div>
+
+      <script>
+        function copyToClipboard(text) {
+          navigator.clipboard.writeText(text).then(() => {
+            alert('Token copied to clipboard!');
+          });
+        }
+      </script>
     </body>
     </html>
   `;
