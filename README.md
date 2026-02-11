@@ -46,7 +46,7 @@ Before running the demo, configure your Okta org with the following components:
    - Save the Client ID and Client Secret
    
 2. **Register an AI Agent**
-   - Navigate to **Applications** > **AI Agents** in your Okta Admin Console
+   - Navigate to **Directory** > **AI Agents** in your Okta Admin Console
    - Create a new AI agent and generate a public/private key pair
    - Link the OIDC application
    - Save the Client ID, Key ID, and private key (JWK format)
@@ -58,6 +58,7 @@ Before running the demo, configure your Okta org with the following components:
    - Configure an access policy:
      - Assign the policy to the **AI Agent** (not the OIDC app)
      - Add a rule with **JWT Bearer** grant type enabled
+     - Add OAuth scopes ie ai_agent
    - 📚 [Connect an AI agent to an authorization server](https://help.okta.com/oie/en-us/content/topics/ai-agents/ai-agent-auth-server.htm)
    - Note the Authorization Server ID and token endpoint
 
