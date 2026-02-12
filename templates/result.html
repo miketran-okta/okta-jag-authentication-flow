@@ -7,16 +7,22 @@
 <body>
   <div class="container">
     <div class="{{HEADER_CLASS}}">
-      <h1>
-        <span class="{{ICON_CLASS}}">{{ICON}}</span>
-        {{HEADER_TITLE}}
-      </h1>
+      <div style="display: flex; justify-content: space-between; align-items: flex-start; width: 100%; margin-bottom: 10px;">
+        <h1 style="margin: 0;">
+          <span class="{{ICON_CLASS}}">{{ICON}}</span>
+          {{HEADER_TITLE}}
+        </h1>
+        <a href="/login" class="restart-button">🔄 Restart Flow</a>
+      </div>
       <span class="{{BADGE_CLASS}}">{{BADGE_TEXT}}</span>
 
       <div class="{{DESCRIPTION_CLASS}}">
         {{DESCRIPTION_CONTENT}}
       </div>
     </div>
+
+    <!-- Progress Indicator with Security Boundaries -->
+    {{PROGRESS_INDICATOR}}
 
     <div class="flow-diagram">
       <h2>{{FLOW_DIAGRAM_TITLE}}</h2>

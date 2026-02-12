@@ -383,6 +383,23 @@ pre {
   transform: translateY(-2px);
   box-shadow: 0 4px 8px rgba(0,0,0,0.2);
 }
+.restart-button {
+  display: inline-block;
+  padding: 8px 16px;
+  background: #667eea;
+  color: white;
+  text-decoration: none;
+  border-radius: 6px;
+  font-weight: bold;
+  font-size: 14px;
+  transition: all 0.2s;
+  white-space: nowrap;
+}
+.restart-button:hover {
+  background: #5568d3;
+  transform: translateY(-2px);
+  box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+}
 /* Home page specific styles */
 .info {
   background: #e3f2fd;
@@ -413,4 +430,162 @@ pre {
 }
 .login-button:hover {
   background: #0056b3;
+}
+
+/* Progress Indicator with Security Boundaries */
+.progress-indicator {
+  display: flex;
+  gap: 20px;
+  justify-content: space-between;
+  background: white;
+  padding: 30px;
+  border-radius: 10px;
+  margin-bottom: 20px;
+  box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+}
+
+.security-boundary {
+  flex: 1;
+  background: rgba(102, 126, 234, 0.05);
+  border: 2px solid #667eea;
+  border-radius: 12px;
+  padding: 15px 10px;
+  position: relative;
+}
+
+.security-boundary.resource-server {
+  background: rgba(118, 75, 162, 0.05);
+  border-color: #764ba2;
+}
+
+.boundary-label {
+  position: absolute;
+  top: -10px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: white;
+  padding: 2px 12px;
+  font-size: 12px;
+  font-weight: bold;
+  color: #667eea;
+  white-space: nowrap;
+  border-radius: 10px;
+}
+
+.security-boundary.resource-server .boundary-label {
+  color: #764ba2;
+}
+
+.boundary-steps {
+  display: flex;
+  justify-content: space-around;
+  align-items: flex-start;
+  padding-top: 10px;
+  position: relative;
+}
+
+.progress-step {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  position: relative;
+  z-index: 1;
+}
+
+.progress-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: #e0e0e0;
+  color: #999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: bold;
+  font-size: 16px;
+  border: 3px solid white;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.15);
+  z-index: 1;
+  transition: background-color 0.3s ease, transform 0.2s ease;
+}
+
+.progress-step.completed .progress-icon {
+  background: #4caf50;
+  color: white;
+}
+
+.progress-step.failed .progress-icon {
+  background: #f44336;
+  color: white;
+}
+
+.progress-step.pending .progress-icon {
+  background: #e0e0e0;
+  color: #999;
+}
+
+.progress-label {
+  font-size: 12px;
+  color: #666;
+  text-align: center;
+  max-width: 120px;
+  margin-top: 8px;
+  line-height: 1.3;
+}
+
+.progress-step.completed .progress-label {
+  color: #333;
+  font-weight: 500;
+}
+
+.progress-step.failed .progress-label {
+  color: #f44336;
+  font-weight: 500;
+}
+
+.progress-step.pending .progress-label {
+  color: #999;
+}
+
+/* Token transition arrow between boundaries */
+.token-transition {
+  position: absolute;
+  right: -25px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 30px;
+  height: 30px;
+  background: white;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  color: #667eea;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.15);
+  z-index: 10;
+}
+
+.security-boundary.resource-server .token-transition {
+  display: none;
+}
+
+/* Responsive: stack on mobile */
+@media (max-width: 768px) {
+  .progress-indicator {
+    flex-direction: column;
+  }
+
+  .token-transition {
+    display: none;
+  }
+
+  .security-boundary {
+    margin-bottom: 10px;
+  }
+
+  .boundary-steps {
+    flex-wrap: wrap;
+    gap: 15px;
+  }
 }

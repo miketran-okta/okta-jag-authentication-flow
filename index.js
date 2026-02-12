@@ -915,6 +915,94 @@ function buildDescriptionContent(isError, error, results, friendlyError) {
   }
 }
 
+// Build the progress indicator with security boundaries
+function buildProgressIndicator(isError, error) {
+  // Define the steps for each security boundary
+  // Steps 1-3: Identity Provider (Okta)
+  // Steps 4-6: Resource Server
+
+  // Determine status for each step based on error state
+  // failedStep: 0 = auth failed, 1 = ID token, 2 = JAG-ID, 3 = access token
+  const getStepStatus = (stepIndex) => {
+    if (!isError) return 'completed';
+
+    // Map step index (1-5) to failedStep values
+    // Step 1: User Authorization (failedStep 0)
+    // Step 2: ID Token Exchange (failedStep 1)
+    // Step 3: JAG-ID Exchange (failedStep 2)
+    // Steps 4-5: Access Token / Resource Access (failedStep 3)
+    const stepToFailedStepMap = {
+      1: 0,  // User Auth
+      2: 1,  // ID Token
+      3: 2,  // JAG-ID
+      4: 3,  // Access Token
+      5: 3   // Resource Access
+    };
+
+    const mappedFailedStep = stepToFailedStepMap[stepIndex];
+
+    if (mappedFailedStep < error.failedStep) {
+      return 'completed';
+    } else if (mappedFailedStep === error.failedStep) {
+      return 'failed';
+    } else {
+      return 'failed'; // All subsequent steps also fail
+    }
+  };
+
+  const getIcon = (status, stepNum) => {
+    if (status === 'completed') return '✓';
+    if (status === 'failed') return '✗';
+    return stepNum;
+  };
+
+  const steps = [
+    { num: 1, label: 'Authenticate User', boundary: 'idp' },
+    { num: 2, label: 'Retrieve ID Token', boundary: 'idp' },
+    { num: 3, label: 'ID Token->ID-JAG', boundary: 'idp' },
+    { num: 4, label: 'ID-JAG->Access Token', boundary: 'resource' },
+    { num: 5, label: 'Access Resource', boundary: 'resource' }
+  ];
+
+  const idpSteps = steps.filter(s => s.boundary === 'idp');
+  const resourceSteps = steps.filter(s => s.boundary === 'resource');
+
+  const renderStep = (step, isLastInBoundary) => {
+    const status = getStepStatus(step.num);
+    const icon = getIcon(status, step.num);
+    return `
+        <div class="progress-step ${status}">
+          <div class="progress-icon">${icon}</div>
+          <div class="progress-label">${step.label}</div>
+        </div>`;
+  };
+
+  // Check if we should show transition arrow (only if IDP steps completed and moving to resource)
+  // IDP now includes steps 1-3, so show arrow if failedStep >= 3 (meaning JAG-ID succeeded)
+  const showTransition = !isError || error.failedStep >= 3;
+
+  return `
+    <div class="progress-indicator">
+      <!-- Identity Provider Security Boundary -->
+      <div class="security-boundary">
+        <div class="boundary-label">🔐 Identity Provider (Okta)</div>
+        <div class="boundary-steps">
+          ${idpSteps.map((s, i) => renderStep(s, i === idpSteps.length - 1)).join('')}
+        </div>
+        ${showTransition ? '<div class="token-transition">→</div>' : ''}
+      </div>
+
+      <!-- Resource Server Security Boundary -->
+      <div class="security-boundary resource-server">
+        <div class="boundary-label">🏢 Resource Server</div>
+        <div class="boundary-steps">
+          ${resourceSteps.map((s, i) => renderStep(s, i === resourceSteps.length - 1)).join('')}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
 function buildHotspots(isError, error) {
   if (!isError) {
     return `
@@ -1491,6 +1579,7 @@ function generateFlowHTML(results) {
     BADGE_TEXT: isError ? 'Access Denied' : 'Success',
     DESCRIPTION_CLASS: isError ? 'error-description' : 'success-description',
     DESCRIPTION_CONTENT: buildDescriptionContent(isError, error, results, friendlyError),
+    PROGRESS_INDICATOR: buildProgressIndicator(isError, error),
     FLOW_DIAGRAM_TITLE: isError
       ? `📊 Interactive Flow Diagram${error.failedStep === 0 ? ' - Authorization Failed' : ` - Error at Step ${error.failedStep + 2}`}`
       : '📊 Interactive Flow Diagram',
