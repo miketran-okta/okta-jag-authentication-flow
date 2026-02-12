@@ -1177,7 +1177,7 @@ function buildDetailedStepsHTML(isError, error, results) {
     if (results.tokens.idToken) {
       tokensHTML += `
       <div class="step">
-        <h2>Step 1: ID Token Acquired ✓</h2>
+        <h2>Step 3: ID Token Acquired ✓</h2>
         <div class="step-meta">
           Endpoint: ${results.steps[0].endpoint}<br>
           Time: ${results.steps[0].timestamp}
@@ -1198,7 +1198,7 @@ function buildDetailedStepsHTML(isError, error, results) {
     if (results.tokens.jagToken) {
       tokensHTML += `
       <div class="step">
-        <h2>Step 2: JAG-ID Token Acquired ✓</h2>
+        <h2>Step 4: JAG-ID Token Acquired ✓</h2>
         <div class="step-meta">
           Endpoint: ${results.steps[1].endpoint}<br>
           Time: ${results.steps[1].timestamp}
@@ -1227,7 +1227,7 @@ function buildDetailedStepsHTML(isError, error, results) {
     // Add failed step
     tokensHTML += `
       <div class="step failed">
-        <h2>Step ${error.failedStep}: ${error.failedStepName} ✗</h2>
+        <h2>${error.failedStep === 0 ? 'Steps 1 and 2' : `Step ${error.failedStep + 2}`}: ${error.failedStepName} ✗</h2>
         <div class="step-meta">
           Endpoint: ${error.failedEndpoint}<br>
           Time: ${error.timestamp}
@@ -1272,9 +1272,9 @@ Received Parameters:
   state: ${results.authResponse.state}`;
 
   return `
-    <!-- Step 0: Authorization Request/Response -->
+    <!-- Steps 1 and 2: Authorization Request/Response -->
     <div class="step">
-      <h2>Step 0: Authorization Request & Response</h2>
+      <h2>Steps 1 and 2: Authorization Request & Response</h2>
       <div class="step-meta">
         Endpoint: ${config.issuer}/oauth2/v1/authorize<br>
         Time: ${results.authRequest.timestamp}
@@ -1289,9 +1289,9 @@ Received Parameters:
       </div>
     </div>
 
-    <!-- Step 1: ID Token -->
+    <!-- Step 3: ID Token -->
     <div class="step">
-      <h2>Step 1: ID Token Acquired</h2>
+      <h2>Step 3: ID Token Acquired</h2>
       <div class="step-meta">
         Endpoint: ${results.steps[0].endpoint}<br>
         Time: ${results.steps[0].timestamp}
@@ -1329,9 +1329,9 @@ Received Parameters:
       </div>
     </div>
 
-    <!-- Step 2: JAG Token -->
+    <!-- Step 4: JAG Token -->
     <div class="step">
-      <h2>Step 2: JAG-ID Token Acquired</h2>
+      <h2>Step 4: JAG-ID Token Acquired</h2>
       <div class="step-meta">
         Endpoint: ${results.steps[1].endpoint}<br>
         Time: ${results.steps[1].timestamp}
@@ -1381,9 +1381,9 @@ Received Parameters:
       </div>
     </div>
 
-    <!-- Step 3: Access Token -->
+    <!-- Step 5: Access Token -->
     <div class="step">
-      <h2>Step 3: Access Token Acquired (Final)</h2>
+      <h2>Step 5: Access Token Acquired (Final)</h2>
       <div class="step-meta">
         Endpoint: ${results.steps[2].endpoint}<br>
         Time: ${results.steps[2].timestamp}
@@ -1456,7 +1456,7 @@ function generateFlowHTML(results) {
     DESCRIPTION_CLASS: isError ? 'error-description' : 'success-description',
     DESCRIPTION_CONTENT: buildDescriptionContent(isError, error, results, friendlyError),
     FLOW_DIAGRAM_TITLE: isError
-      ? `📊 Interactive Flow Diagram${error.failedStep === 0 ? ' - Authorization Failed' : ` - Error at Step ${error.failedStep}`}`
+      ? `📊 Interactive Flow Diagram${error.failedStep === 0 ? ' - Authorization Failed' : ` - Error at Step ${error.failedStep + 2}`}`
       : '📊 Interactive Flow Diagram',
     FLOW_DIAGRAM_SUBTITLE: isError
       ? (error.failedStep === 0 ? 'Click the red circle to view error details:' : 'Green circles show successful steps. Click the red circle to view error details:')
