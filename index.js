@@ -1082,7 +1082,7 @@ function generateResultsHTML(results) {
         }
         body {
           font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-          background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+          background: #f5f7fa;
           padding: 20px;
           min-height: 100vh;
         }
@@ -2116,7 +2116,7 @@ function generateErrorHTML(results) {
         }
         body {
           font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-          background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+          background: #f5f7fa;
           padding: 20px;
           min-height: 100vh;
         }
