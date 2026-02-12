@@ -1173,6 +1173,42 @@ function buildDetailedStepsHTML(isError, error, results) {
   if (isError) {
     let tokensHTML = '';
 
+    // Always show authorization request/response if we got past step 0
+    if (error.failedStep >= 1) {
+      const authHost = new URL(results.authRequest.url).host;
+      const authPath = new URL(results.authRequest.url).pathname + '?' + new URL(results.authRequest.url).search;
+      const authRequestDisplay = `GET ${authPath} HTTP/1.1
+Host: ${authHost}
+
+Parameters:
+${Object.entries(results.authRequest.params).map(([k, v]) => `  ${k}: ${v}`).join('\n')}`;
+
+      const authResponseDisplay = `HTTP/1.1 302 Found
+Location: ${config.redirectUri}?code=${results.authResponse.code}&state=${results.authResponse.state}
+
+Received Parameters:
+  code: ${results.authResponse.code}
+  state: ${results.authResponse.state}`;
+
+      tokensHTML += `
+      <div class="step">
+        <h2>Steps 1 and 2: Authorization Request & Response ✓</h2>
+        <div class="step-meta">
+          Endpoint: ${config.issuer}/oauth2/v1/authorize<br>
+          Time: ${results.authRequest.timestamp}
+        </div>
+        <div class="token-section">
+          <h3>📤 Authorization Request</h3>
+          <div class="payload-display"><pre>${authRequestDisplay}</pre></div>
+        </div>
+        <div class="token-section">
+          <h3>📥 Authorization Response</h3>
+          <div class="payload-display"><pre>${authResponseDisplay}</pre></div>
+        </div>
+      </div>
+      `;
+    }
+
     // Add successfully acquired tokens
     if (results.tokens.idToken) {
       tokensHTML += `
