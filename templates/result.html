@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>{{TITLE}}</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div class="container">
+    <div class="{{HEADER_CLASS}}">
+      <h1>
+        <span class="{{ICON_CLASS}}">{{ICON}}</span>
+        {{HEADER_TITLE}}
+      </h1>
+      <span class="{{BADGE_CLASS}}">{{BADGE_TEXT}}</span>
+
+      <div class="{{DESCRIPTION_CLASS}}">
+        {{DESCRIPTION_CONTENT}}
+      </div>
+    </div>
+
+    <div class="flow-diagram">
+      <h2>{{FLOW_DIAGRAM_TITLE}}</h2>
+      <p style="color: #666; margin-bottom: 20px;">{{FLOW_DIAGRAM_SUBTITLE}}</p>
+      <div class="flow-container" id="flowContainer">
+        <img src="/flow.png" alt="Authentication Flow" id="flowImage">
+        {{HOTSPOTS}}
+      </div>
+    </div>
+
+    <!-- Modal for showing step details -->
+    <div id="stepModal" class="modal">
+      <div class="modal-content">
+        <div class="modal-header" id="modalHeader">
+          <h2 id="modalTitle">Step Details</h2>
+          <span class="close">&times;</span>
+        </div>
+        <div class="modal-body" id="modalBody">
+          <!-- Content will be injected here -->
+        </div>
+      </div>
+    </div>
+
+    <div id="detailedSteps" style="display: none;">
+    <h2 style="color: white; margin: 20px 0;">📋 Detailed Step-by-Step View</h2>
+    <div class="timeline">
+      {{DETAILED_STEPS}}
+    </div>
+    </div>
+
+    <a href="/" class="back-button">← Start New Flow</a>
+    <a onclick="toggleDetails()" class="details-link">📋 Toggle Detailed View</a>
+  </div>
+
+  <script>
+    // Step data for modal display
+    const stepData = {{STEP_DATA_JS}};
+  </script>
+  <script src="/script.js"></script>
+</body>
+</html>

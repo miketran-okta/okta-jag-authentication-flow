@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Okta JAG Token Flow</title>
+  <link rel="stylesheet" href="/styles.css">
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 800px;
+      margin: 50px auto;
+      padding: 20px;
+      background: #f5f5f5;
+    }
+    .container {
+      background: white;
+      padding: 30px;
+      border-radius: 8px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    h1 {
+      color: #333;
+      border-bottom: 3px solid #007bff;
+      padding-bottom: 10px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Okta JAG Token Exchange Flow</h1>
+    <div class="info">
+      <h3>What happens when you click "Start Authentication":</h3>
+      <ol>
+        <li><strong>User Login:</strong> You'll be redirected to Okta to log in</li>
+        <li><strong>ID Token:</strong> After login, receive an ID token from Okta</li>
+        <li><strong>JAG Token Exchange:</strong> Automatically exchange ID token for JAG-ID token</li>
+        <li><strong>Access Token Exchange:</strong> Automatically exchange JAG-ID token for final access token</li>
+        <li><strong>Results:</strong> View all tokens and their decoded payloads</li>
+      </ol>
+    </div>
+    <p><a href="/login" class="login-button">Start Authentication</a></p>
+  </div>
+</body>
+</html>
