@@ -56,7 +56,24 @@ function decodeJWT(token) {
 }
 
 // Utility: Generate human-friendly error message based on HTTP status and step
-function getHumanFriendlyError(httpStatus, failedStepName, errorDetails) {
+function getHumanFriendlyError(httpStatus, failedStepName, errorDetails, isOAuthError) {
+  // Handle OAuth authorization errors (returned via redirect, not HTTP response)
+  if (isOAuthError) {
+    if (errorDetails?.error === 'access_denied') {
+      return {
+        title: 'Application Access Not Granted',
+        description: 'You do not have permission to access this application. Users must be assigned to the application in Okta before they can authenticate. Please contact your Okta administrator to request access.',
+        icon: '🚫'
+      };
+    }
+    // Handle other OAuth errors
+    return {
+      title: 'Authorization Error',
+      description: `The authorization request failed: ${errorDetails?.error_description || errorDetails?.error || 'Unknown error'}. Please try again or contact your administrator.`,
+      icon: '⚠️'
+    };
+  }
+
   if (!httpStatus) {
     return {
       title: 'Connection Error',
@@ -279,17 +296,45 @@ app.get('/login', (req, res) => {
 
 // Route 3: Handle callback and run complete flow
 app.get('/callback', async (req, res) => {
-  const { code, state } = req.query;
-  
+  const { code, state, error, error_description } = req.query;
+
+  // Check if Okta returned an error (e.g., user not assigned to application)
+  if (error) {
+    const results = {
+      steps: [],
+      tokens: {},
+      errors: [{
+        message: error_description || error,
+        details: {
+          error: error,
+          error_description: error_description
+        },
+        timestamp: new Date().toISOString(),
+        httpStatus: null, // No HTTP status since this is an OAuth error from redirect
+        failedStep: 0, // Failed before any token exchange steps
+        failedStepName: 'User Authentication',
+        failedEndpoint: `${config.issuer}/oauth2/v1/authorize`,
+        oauthError: true // Flag to indicate this is an OAuth authorization error
+      }]
+    };
+
+    // Clean up session if it exists
+    if (state && sessions.has(state)) {
+      sessions.delete(state);
+    }
+
+    return res.status(403).send(generateErrorHTML(results));
+  }
+
   if (!code || !state) {
     return res.status(400).send('Missing code or state parameter');
   }
-  
+
   const session = sessions.get(state);
   if (!session) {
     return res.status(400).send('Invalid state parameter');
   }
-  
+
   const results = {
     steps: [],
     tokens: {},
@@ -950,6 +995,133 @@ function generateResultsHTML(results) {
           transform: translateY(-2px);
           box-shadow: 0 4px 8px rgba(0,0,0,0.2);
         }
+        .progress-indicator {
+          display: flex;
+          justify-content: space-between;
+          align-items: flex-start;
+          margin: 25px 0;
+          padding: 0 20px;
+          gap: 20px;
+        }
+        .security-boundary {
+          flex: 1;
+          background: rgba(102, 126, 234, 0.05);
+          border: 2px solid rgba(102, 126, 234, 0.2);
+          border-radius: 12px;
+          padding: 15px 10px 10px 10px;
+          position: relative;
+        }
+        .security-boundary.resource-server {
+          background: rgba(118, 75, 162, 0.05);
+          border-color: rgba(118, 75, 162, 0.2);
+        }
+        .boundary-label {
+          position: absolute;
+          top: -10px;
+          left: 50%;
+          transform: translateX(-50%);
+          background: white;
+          padding: 2px 12px;
+          font-size: 11px;
+          font-weight: 600;
+          color: #667eea;
+          border-radius: 10px;
+          white-space: nowrap;
+          display: flex;
+          align-items: center;
+          gap: 5px;
+        }
+        .security-boundary.resource-server .boundary-label {
+          color: #764ba2;
+        }
+        .boundary-steps {
+          display: flex;
+          justify-content: space-around;
+          align-items: center;
+          position: relative;
+        }
+        .progress-step {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          flex: 1;
+          position: relative;
+        }
+        .token-transition {
+          position: absolute;
+          right: -25px;
+          top: 15px;
+          font-size: 20px;
+          color: #667eea;
+          z-index: 10;
+          background: white;
+          padding: 2px;
+          border-radius: 50%;
+        }
+        .boundary-steps .progress-step:first-child::after {
+          content: '';
+          position: absolute;
+          top: 20px;
+          left: 50%;
+          width: 100%;
+          height: 3px;
+          background: #e0e0e0;
+          z-index: 0;
+        }
+        .boundary-steps .progress-step:first-child.completed::after {
+          background: #4caf50;
+        }
+        .boundary-steps .progress-step:first-child.failed::after {
+          background: #f44336;
+        }
+        .progress-icon {
+          width: 40px;
+          height: 40px;
+          border-radius: 50%;
+          background: #e0e0e0;
+          color: #999;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          font-size: 18px;
+          font-weight: bold;
+          z-index: 1;
+          position: relative;
+          border: 3px solid white;
+          box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .progress-step.completed .progress-icon {
+          background: #4caf50;
+          color: white;
+        }
+        .progress-step.failed .progress-icon {
+          background: #f44336;
+          color: white;
+        }
+        .progress-step.pending .progress-icon {
+          background: #e0e0e0;
+          color: #999;
+        }
+        .progress-label {
+          margin-top: 10px;
+          font-size: 12px;
+          text-align: center;
+          color: #333;
+          font-weight: 500;
+          max-width: 120px;
+          line-height: 1.3;
+        }
+        .progress-step.completed .progress-label {
+          color: #4caf50;
+          font-weight: 600;
+        }
+        .progress-step.failed .progress-label {
+          color: #f44336;
+          font-weight: 600;
+        }
+        .progress-step.pending .progress-label {
+          color: #999;
+        }
       </style>
     </head>
     <body>
@@ -961,7 +1133,7 @@ function generateResultsHTML(results) {
           </h1>
           <span class="success-badge">Success</span>
 
-          <div class="success-description">            
+          <div class="success-description">
             <p>The full Cross App Access token exchange flow was successful. The user was authenticated via Okta by the application, the AI agent exchanged the ID token for a JAG-ID token, and finally received an access token from the MCP authorization server to access the protected resource.</p>
 
             <div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid #c3e6cb;">
@@ -982,6 +1154,36 @@ function generateResultsHTML(results) {
                   <span style="font-weight: 600;">🎫 Token Audience:</span>
                   <span>${targetAudience}</span>
                 ` : ''}
+              </div>
+            </div>
+          </div>
+
+          <div class="progress-indicator">
+            <div class="security-boundary">
+              <div class="boundary-label">🔐 Identity Provider</div>
+              <div class="boundary-steps">
+                <div class="progress-step completed">
+                  <div class="progress-icon">✓</div>
+                  <div class="progress-label">User Authentication (ID token)</div>
+                </div>
+                <div class="progress-step completed">
+                  <div class="progress-icon">✓</div>
+                  <div class="progress-label">AI Agent Connection (ID-JAG token)</div>
+                  <div class="token-transition">→</div>
+                </div>
+              </div>
+            </div>
+            <div class="security-boundary resource-server">
+              <div class="boundary-label">🏢 Resource Server</div>
+              <div class="boundary-steps">
+                <div class="progress-step completed">
+                  <div class="progress-icon">✓</div>
+                  <div class="progress-label">AI Agent Authorization (Access token)</div>
+                </div>
+                <div class="progress-step completed">
+                  <div class="progress-icon">✓</div>
+                  <div class="progress-label">Resource Access</div>
+                </div>
               </div>
             </div>
           </div>
@@ -1168,7 +1370,7 @@ function generateResultsHTML(results) {
 // Generate Error HTML
 function generateErrorHTML(results) {
   const error = results.errors[0];
-  const friendlyError = getHumanFriendlyError(error.httpStatus, error.failedStepName, error.details);
+  const friendlyError = getHumanFriendlyError(error.httpStatus, error.failedStepName, error.details, error.oauthError);
 
   // Extract contextual information for the error description
   const userEmail = results.tokens.idToken?.payload?.email || results.tokens.idToken?.payload?.sub || 'Unknown User';
@@ -1188,6 +1390,94 @@ function generateErrorHTML(results) {
     requestedScope = results.tokens.jagToken?.scope || 'N/A';
     requestedAudience = results.tokens.jagToken?.payload?.aud || 'N/A';
   }
+
+  // Determine progress indicator state based on failed step
+  let progressSteps = [
+    { label: 'User Authentication (ID token)', icon: '👤', status: 'pending' },
+    { label: 'AI Agent Connection (ID-JAG token)', icon: '🔐', status: 'pending' },
+    { label: 'AI Agent Authorization (Access token)', icon: '🎫', status: 'pending' },
+    { label: 'Resource Access', icon: '✅', status: 'pending' }
+  ];
+
+  // Mark steps based on what was completed
+  if (error.failedStep === 0) {
+    // OAuth authorization error - user authentication failed
+    progressSteps[0].status = 'failed';
+    progressSteps[0].icon = '✗';
+    // All subsequent steps also fail
+    progressSteps[1].status = 'failed';
+    progressSteps[1].icon = '✗';
+    progressSteps[2].status = 'failed';
+    progressSteps[2].icon = '✗';
+    progressSteps[3].status = 'failed';
+    progressSteps[3].icon = '✗';
+  } else if (error.failedStep === 1) {
+    // ID Token exchange failed - user auth succeeded but token exchange failed
+    progressSteps[0].status = 'completed';
+    progressSteps[0].icon = '✓';
+    progressSteps[1].status = 'failed';
+    progressSteps[1].icon = '✗';
+    // Subsequent steps also fail
+    progressSteps[2].status = 'failed';
+    progressSteps[2].icon = '✗';
+    progressSteps[3].status = 'failed';
+    progressSteps[3].icon = '✗';
+  } else if (error.failedStep === 2) {
+    // JAG Token exchange failed - user auth succeeded, attempting agent policy check
+    progressSteps[0].status = 'completed';
+    progressSteps[0].icon = '✓';
+    progressSteps[1].status = 'failed';
+    progressSteps[1].icon = '✗';
+    // Subsequent steps also fail
+    progressSteps[2].status = 'failed';
+    progressSteps[2].icon = '✗';
+    progressSteps[3].status = 'failed';
+    progressSteps[3].icon = '✗';
+  } else if (error.failedStep === 3) {
+    // Access Token exchange failed - JAG succeeded, token grant failed
+    progressSteps[0].status = 'completed';
+    progressSteps[0].icon = '✓';
+    progressSteps[1].status = 'completed';
+    progressSteps[1].icon = '✓';
+    progressSteps[2].status = 'failed';
+    progressSteps[2].icon = '✗';
+    // Resource access also fails since we don't have an access token
+    progressSteps[3].status = 'failed';
+    progressSteps[3].icon = '✗';
+  }
+
+  // Generate progress indicator HTML with security boundaries
+  const progressHTML = `
+    <div class="progress-indicator">
+      <div class="security-boundary">
+        <div class="boundary-label">🔐 Identity Provider</div>
+        <div class="boundary-steps">
+          <div class="progress-step ${progressSteps[0].status}">
+            <div class="progress-icon">${progressSteps[0].icon}</div>
+            <div class="progress-label">${progressSteps[0].label}</div>
+          </div>
+          <div class="progress-step ${progressSteps[1].status}">
+            <div class="progress-icon">${progressSteps[1].icon}</div>
+            <div class="progress-label">${progressSteps[1].label}</div>
+            <div class="token-transition">→</div>
+          </div>
+        </div>
+      </div>
+      <div class="security-boundary resource-server">
+        <div class="boundary-label">🏢 Resource Server</div>
+        <div class="boundary-steps">
+          <div class="progress-step ${progressSteps[2].status}">
+            <div class="progress-icon">${progressSteps[2].icon}</div>
+            <div class="progress-label">${progressSteps[2].label}</div>
+          </div>
+          <div class="progress-step ${progressSteps[3].status}">
+            <div class="progress-icon">${progressSteps[3].icon}</div>
+            <div class="progress-label">${progressSteps[3].label}</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
 
   // Build tokens section HTML showing all successfully acquired tokens
   let tokensHTML = '';
@@ -1455,6 +1745,133 @@ function generateErrorHTML(results) {
           transform: translateY(-2px);
           box-shadow: 0 4px 8px rgba(0,0,0,0.2);
         }
+        .progress-indicator {
+          display: flex;
+          justify-content: space-between;
+          align-items: flex-start;
+          margin: 25px 0;
+          padding: 0 20px;
+          gap: 20px;
+        }
+        .security-boundary {
+          flex: 1;
+          background: rgba(102, 126, 234, 0.05);
+          border: 2px solid rgba(102, 126, 234, 0.2);
+          border-radius: 12px;
+          padding: 15px 10px 10px 10px;
+          position: relative;
+        }
+        .security-boundary.resource-server {
+          background: rgba(118, 75, 162, 0.05);
+          border-color: rgba(118, 75, 162, 0.2);
+        }
+        .boundary-label {
+          position: absolute;
+          top: -10px;
+          left: 50%;
+          transform: translateX(-50%);
+          background: white;
+          padding: 2px 12px;
+          font-size: 11px;
+          font-weight: 600;
+          color: #667eea;
+          border-radius: 10px;
+          white-space: nowrap;
+          display: flex;
+          align-items: center;
+          gap: 5px;
+        }
+        .security-boundary.resource-server .boundary-label {
+          color: #764ba2;
+        }
+        .boundary-steps {
+          display: flex;
+          justify-content: space-around;
+          align-items: center;
+          position: relative;
+        }
+        .progress-step {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          flex: 1;
+          position: relative;
+        }
+        .token-transition {
+          position: absolute;
+          right: -25px;
+          top: 15px;
+          font-size: 20px;
+          color: #667eea;
+          z-index: 10;
+          background: white;
+          padding: 2px;
+          border-radius: 50%;
+        }
+        .boundary-steps .progress-step:first-child::after {
+          content: '';
+          position: absolute;
+          top: 20px;
+          left: 50%;
+          width: 100%;
+          height: 3px;
+          background: #e0e0e0;
+          z-index: 0;
+        }
+        .boundary-steps .progress-step:first-child.completed::after {
+          background: #4caf50;
+        }
+        .boundary-steps .progress-step:first-child.failed::after {
+          background: #f44336;
+        }
+        .progress-icon {
+          width: 40px;
+          height: 40px;
+          border-radius: 50%;
+          background: #e0e0e0;
+          color: #999;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          font-size: 18px;
+          font-weight: bold;
+          z-index: 1;
+          position: relative;
+          border: 3px solid white;
+          box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .progress-step.completed .progress-icon {
+          background: #4caf50;
+          color: white;
+        }
+        .progress-step.failed .progress-icon {
+          background: #f44336;
+          color: white;
+        }
+        .progress-step.pending .progress-icon {
+          background: #e0e0e0;
+          color: #999;
+        }
+        .progress-label {
+          margin-top: 10px;
+          font-size: 12px;
+          text-align: center;
+          color: #333;
+          font-weight: 500;
+          max-width: 120px;
+          line-height: 1.3;
+        }
+        .progress-step.completed .progress-label {
+          color: #4caf50;
+          font-weight: 600;
+        }
+        .progress-step.failed .progress-label {
+          color: #f44336;
+          font-weight: 600;
+        }
+        .progress-step.pending .progress-label {
+          color: #999;
+        }
       </style>
     </head>
     <body>
@@ -1467,7 +1884,7 @@ function generateErrorHTML(results) {
           <span class="error-badge">Access Denied</span>
 
           <div class="error-description">
-            
+
             <p>${friendlyError.description}</p>
 
             <div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid #ffeaa7;">
@@ -1491,6 +1908,8 @@ function generateErrorHTML(results) {
               </div>
             </div>
           </div>
+
+          ${progressHTML}
         </div>
 
         <div class="timeline">
@@ -1498,30 +1917,40 @@ function generateErrorHTML(results) {
 
           <!-- Failed Step -->
           <div class="step failed">
-            <h2>Step ${error.failedStep}: ${error.failedStepName} ✗</h2>
+            <h2>${error.failedStep > 0 ? `Step ${error.failedStep}:` : ''} ${error.failedStepName} ✗</h2>
             <div class="step-meta">
-              Endpoint: ${error.failedEndpoint}<br>
+              ${error.oauthError ? 'Authorization' : 'Token'} Endpoint: ${error.failedEndpoint}<br>
               Time: ${error.timestamp}
             </div>
 
-            ${error.request ? `
+            ${error.oauthError ? `
+              <div class="error-details">
+                <h3>Authorization Error Details</h3>
+                <div style="background: #fff; padding: 12px; border-radius: 4px; border: 1px solid #dee2e6; margin-top: 10px;">
+                  <div style="margin-bottom: 8px;"><strong>Error:</strong> ${error.details.error}</div>
+                  <div><strong>Description:</strong> ${error.details.error_description || 'No additional details provided'}</div>
+                </div>
+              </div>
+            ` : ''}
+
+            ${!error.oauthError && error.request ? `
               <div class="error-details">
                 <h3>📤 HTTP Request (Failed)</h3>
                 <pre>${error.request.raw}</pre>
               </div>
             ` : ''}
 
-            ${error.response ? `
+            ${!error.oauthError && error.response ? `
               <div class="error-details">
                 <h3>📥 Error Response (HTTP ${error.response.status})</h3>
                 <pre>${error.response.raw}</pre>
               </div>
-            ` : `
+            ` : !error.oauthError ? `
               <div class="error-details">
                 <h3>Error Details</h3>
                 <pre>${error.message}</pre>
               </div>
-            `}
+            ` : ''}
           </div>
         </div>
 

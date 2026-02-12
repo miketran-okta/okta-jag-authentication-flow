@@ -131,7 +131,9 @@ http://localhost:3000
    - **ID Token**: User identity from Okta
    - **JAG-ID Token**: Intermediate token proving agent authorization
    - **Access Token**: Final token for accessing the resource
-5. Optionally: demonstrate AI Agent access control by revoking OAuth scopes or modifying user/group assignments within the Okta Custom Authorization Server.
+5. Optionally
+   - demonstrate the resource domain authorizing AI Agent by revoking OAuth scopes or modifying user/group assignments within the Okta Custom Authorization Server.
+   - demonstrate the IDP domain authorizing AI Agent by revoking managed connection
 
 ## 📋 How It Works
 
