@@ -4,6 +4,7 @@ const crypto = require('crypto');
 const axios = require('axios');
 const querystring = require('querystring');
 const { SignJWT } = require('jose');
+const path = require('path');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -188,6 +189,278 @@ async function createResourceClientAssertion() {
   return assertion;
 }
 
+// Utility: Escape text for use in JavaScript template literals
+function escapeForJS(text) {
+  return text
+    .replace(/\\/g, '\\\\')
+    .replace(/`/g, '\\`')
+    .replace(/\$/g, '\\$');
+}
+
+// Helper: Build hotspot markers for flow diagram
+function buildHotspots(isError, error) {
+  if (!isError) {
+    return `
+      <div class="flow-hotspot success" id="hotspot1" style="left: 12%; top: 31%;">1</div>
+      <div class="flow-hotspot success" id="hotspot2" style="left: 12.4%; top: 55%;">2</div>
+      <div class="flow-hotspot success" id="hotspot3" style="left: 23%; top: 73%;">3</div>
+      <div class="flow-hotspot success" id="hotspot4" style="left: 28%; top: 73%;">4</div>
+      <div class="flow-hotspot success" id="hotspot5" style="left: 32.5%; top: 73%;">5</div>
+      <div class="flow-hotspot success" id="hotspot6" style="left: 37.2%; top: 81%;">6</div>
+    `;
+  }
+
+  if (error.failedStep === 0) {
+    return '<div class="flow-hotspot error" id="hotspot1" style="left: 12%; top: 31%;">1</div>';
+  }
+
+  let hotspots = `
+    <div class="flow-hotspot success" id="hotspot1" style="left: 12%; top: 31%;">1</div>
+    <div class="flow-hotspot success" id="hotspot2" style="left: 12.4%; top: 55%;">2</div>
+    <div class="flow-hotspot ${error.failedStep === 1 ? 'error' : 'success'}" id="hotspot3" style="left: 23%; top: 73%;">3</div>
+  `;
+
+  if (error.failedStep >= 2) {
+    hotspots += `<div class="flow-hotspot ${error.failedStep === 2 ? 'error' : 'success'}" id="hotspot4" style="left: 28%; top: 73%;">4</div>`;
+  }
+
+  if (error.failedStep >= 3) {
+    hotspots += `<div class="flow-hotspot error" id="hotspot5" style="left: 32.5%; top: 73%;">5</div>`;
+  }
+
+  return hotspots;
+}
+
+// Helper: Build step data for modal display
+function buildStepDataJS(isError, error, results) {
+  // Handle cases where authRequest/authResponse don't exist (e.g., OAuth errors or early failures)
+  let authRequestDisplay = 'Not available';
+  let authResponseDisplay = 'Not available';
+
+  if (results.authRequest && results.authRequest.url) {
+    const authHost = new URL(results.authRequest.url).host;
+    const authPath = new URL(results.authRequest.url).pathname + '?' + new URL(results.authRequest.url).search;
+    authRequestDisplay = `GET ${authPath} HTTP/1.1
+Host: ${authHost}
+
+Parameters:
+${Object.entries(results.authRequest.params).map(([k, v]) => `  ${k}: ${v}`).join('\n')}`;
+  }
+
+  if (results.authResponse) {
+    authResponseDisplay = `HTTP/1.1 302 Found
+Location: ${config.redirectUri}?code=${results.authResponse.code}&state=${results.authResponse.state}
+
+Received Parameters:
+  code: ${results.authResponse.code}
+  state: ${results.authResponse.state}`;
+  }
+
+  return `{
+    1: {
+      title: 'Step 1: Initiate OIDC Flow',
+      isError: ${isError && error.failedStep === 0},
+      content: \`${isError && error.failedStep === 0 ? `
+        <div class="error-details">
+          <h3>❌ Authorization Failed</h3>
+          <p><strong>Error:</strong> ${error.details.error}</p>
+          <p><strong>Description:</strong> ${error.details.error_description}</p>
+          ${error.response ? `
+            <h4 style="margin-top: 15px;">📥 Error Response</h4>
+            <pre>${escapeForJS(error.response.raw)}</pre>
+          ` : ''}
+        </div>
+        <div class="token-section" style="margin-top: 15px;">
+          <h3>ℹ️ What Happened</h3>
+          <p>The authorization request to Okta failed or returned an error. This occurred before any tokens could be exchanged. Common causes include:</p>
+          <ul style="margin-left: 20px; margin-top: 10px;">
+            <li>Missing or invalid callback parameters</li>
+            <li>User denied consent</li>
+            <li>Session expired or invalid state</li>
+            <li>Client configuration issues</li>
+          </ul>
+        </div>
+      ` : `
+        <div class="token-section">
+          <h3>📤 Authorization Request</h3>
+          <div class="payload-display"><pre>${escapeForJS(authRequestDisplay)}</pre></div>
+        </div>
+        <div class="token-section">
+          <h3>📥 Authorization Response</h3>
+          <div class="payload-display"><pre>${escapeForJS(authResponseDisplay)}</pre></div>
+        </div>
+        <div class="token-section">
+          <h3>ℹ️ Description</h3>
+          <p>The browser initiates the OpenID Connect flow by redirecting to Okta's authorization endpoint. The user authenticates and Okta returns an authorization code.</p>
+        </div>
+      `}\`
+    },
+    2: {
+      title: 'Step 2: Code',
+      isError: false,
+      content: \`
+        <div class="token-section">
+          <h3>ℹ️ Description</h3>
+          <p>The OAuth client (requesting app) receives the authorization code from the browser and prepares to exchange it.</p>
+        </div>
+      \`
+    },
+    3: {
+      title: 'Step 3: Get ID Token',
+      isError: ${isError && error.failedStep === 1},
+      content: \`${results.tokens.idToken ? `
+        <div class="token-section">
+          <h3>📤 HTTP Request</h3>
+          <div class="payload-display"><pre>${results.steps[0] ? escapeForJS(results.steps[0].request.raw) : ''}</pre></div>
+        </div>
+        <div class="token-section">
+          <h3>📥 HTTP Response</h3>
+          <div class="payload-display"><pre>${results.steps[0] ? escapeForJS(results.steps[0].response.raw) : ''}</pre></div>
+        </div>
+        <div class="token-section">
+          <h3>🔑 ID Token</h3>
+          <button class="copy-btn" onclick="copyToClipboard('${results.tokens.idToken.token}')">Copy Token</button>
+          <div class="token-display">${results.tokens.idToken.token}</div>
+          <h3 style="margin-top: 15px;">📄 Decoded Payload</h3>
+          <div class="payload-display"><pre>${escapeForJS(JSON.stringify(results.tokens.idToken.payload, null, 2))}</pre></div>
+        </div>
+      ` : isError && error.failedStep === 1 ? `
+        <div class="error-details">
+          <h3>❌ Failed to acquire ID Token</h3>
+          ${error.request ? `
+            <h4 style="margin-top: 15px;">📤 HTTP Request (Failed)</h4>
+            <pre>${escapeForJS(error.request.raw)}</pre>
+          ` : ''}
+          ${error.response ? `
+            <h4 style="margin-top: 15px;">📥 Error Response (HTTP ${error.response.status})</h4>
+            <pre>${escapeForJS(error.response.raw)}</pre>
+          ` : `
+            <pre>${error.message}</pre>
+          `}
+        </div>
+      ` : ''}\`
+    },
+    4: {
+      title: 'Step 4: Swap ID Token for ID-JAG',
+      isError: ${isError && error.failedStep === 2},
+      content: \`${results.tokens.jagToken ? `
+        <div class="token-section">
+          <h3>📤 HTTP Request</h3>
+          <div class="payload-display"><pre>${results.steps[1] ? escapeForJS(results.steps[1].request.raw) : ''}</pre></div>
+        </div>
+        <div class="token-section">
+          <h3>📥 HTTP Response</h3>
+          <div class="payload-display"><pre>${results.steps[1] ? escapeForJS(results.steps[1].response.raw) : ''}</pre></div>
+        </div>
+        <div class="token-section">
+          <h3>🔐 JAG Client Assertion</h3>
+          <button class="copy-btn" onclick="copyToClipboard('${results.tokens.jagClientAssertion.token}')">Copy Token</button>
+          <div class="token-display">${results.tokens.jagClientAssertion.token}</div>
+          <div class="payload-display"><pre>${escapeForJS(JSON.stringify(results.tokens.jagClientAssertion.payload, null, 2))}</pre></div>
+        </div>
+        <div class="token-section">
+          <h3>🎫 JAG-ID Token</h3>
+          <button class="copy-btn" onclick="copyToClipboard('${results.tokens.jagToken.token}')">Copy Token</button>
+          <div class="token-display">${results.tokens.jagToken.token}</div>
+          <h3 style="margin-top: 15px;">📄 Decoded Payload</h3>
+          <div class="payload-display"><pre>${escapeForJS(JSON.stringify(results.tokens.jagToken.payload, null, 2))}</pre></div>
+        </div>
+      ` : isError && error.failedStep === 2 ? `
+        <div class="error-details">
+          <h3>❌ Failed to acquire JAG-ID Token</h3>
+          ${error.request ? `
+            <h4 style="margin-top: 15px;">📤 HTTP Request (Failed)</h4>
+            <pre>${escapeForJS(error.request.raw)}</pre>
+          ` : ''}
+          ${error.response ? `
+            <h4 style="margin-top: 15px;">📥 Error Response (HTTP ${error.response.status})</h4>
+            <pre>${escapeForJS(error.response.raw)}</pre>
+          ` : `
+            <pre>${error.message}</pre>
+          `}
+        </div>
+      ` : ''}\`
+    },
+    5: {
+      title: 'Step 5: Swap ID-JAG for Token',
+      isError: ${isError && error.failedStep === 3},
+      content: \`${results.tokens.accessToken ? `
+        <div class="token-section">
+          <h3>📤 HTTP Request</h3>
+          <div class="payload-display"><pre>${results.steps[2] ? escapeForJS(results.steps[2].request.raw) : ''}</pre></div>
+        </div>
+        <div class="token-section">
+          <h3>📥 HTTP Response</h3>
+          <div class="payload-display"><pre>${results.steps[2] ? escapeForJS(results.steps[2].response.raw) : ''}</pre></div>
+        </div>
+        <div class="token-section">
+          <h3>🔐 Resource Client Assertion</h3>
+          <button class="copy-btn" onclick="copyToClipboard('${results.tokens.resourceClientAssertion.token}')">Copy Token</button>
+          <div class="token-display">${results.tokens.resourceClientAssertion.token}</div>
+          <div class="payload-display"><pre>${escapeForJS(JSON.stringify(results.tokens.resourceClientAssertion.payload, null, 2))}</pre></div>
+        </div>
+        <div class="token-section">
+          <h3>✨ Final Access Token</h3>
+          <button class="copy-btn" onclick="copyToClipboard('${results.tokens.accessToken.token}')">Copy Token</button>
+          <div class="token-display">${results.tokens.accessToken.token}</div>
+          <h3 style="margin-top: 15px;">📄 Decoded Payload</h3>
+          <div class="payload-display"><pre>${escapeForJS(JSON.stringify(results.tokens.accessToken.payload, null, 2))}</pre></div>
+        </div>
+      ` : isError && error.failedStep === 3 ? `
+        <div class="error-details">
+          <h3>❌ Failed to acquire Access Token</h3>
+          ${error.request ? `
+            <h4 style="margin-top: 15px;">📤 HTTP Request (Failed)</h4>
+            <pre>${escapeForJS(error.request.raw)}</pre>
+          ` : ''}
+          ${error.response ? `
+            <h4 style="margin-top: 15px;">📥 Error Response (HTTP ${error.response.status})</h4>
+            <pre>${escapeForJS(error.response.raw)}</pre>
+          ` : `
+            <pre>${error.message}</pre>
+          `}
+        </div>
+      ` : ''}\`
+    },
+    6: {
+      title: 'Step 6: Access APIs with Token',
+      isError: ${isError},
+      content: \`${isError ? `
+        <div class="token-section">
+          <h3>❌ Access Denied</h3>
+          <p>The flow did not complete successfully. The OAuth client cannot access the Resource Server APIs because the access token was not acquired.</p>
+        </div>
+      ` : `
+        <div class="token-section">
+          <h3>ℹ️ Description</h3>
+          <p>The OAuth client can now use the access token to make authenticated requests to the Resource Server APIs.</p>
+        </div>
+        <div class="token-section">
+          <h3>✨ Access Token Details</h3>
+          <div class="metadata">
+            <div class="metadata-item">
+              <strong>Token Type</strong>
+              <span>${results.tokens.accessToken.tokenType}</span>
+            </div>
+            <div class="metadata-item">
+              <strong>Expires In</strong>
+              <span>${results.tokens.accessToken.expiresIn} seconds</span>
+            </div>
+            <div class="metadata-item">
+              <strong>Scope</strong>
+              <span>${results.tokens.accessToken.scope}</span>
+            </div>
+            <div class="metadata-item">
+              <strong>Issuer</strong>
+              <span>${results.tokens.accessToken.payload.iss}</span>
+            </div>
+          </div>
+        </div>
+      `}\`
+    }
+  }`;
+}
+
 // Route 1: Home page
 app.get('/', (req, res) => {
   res.send(`
@@ -264,6 +537,11 @@ app.get('/', (req, res) => {
     </body>
     </html>
   `);
+});
+
+// Serve flow diagram image
+app.get('/flow.png', (req, res) => {
+  res.sendFile(path.join(__dirname, 'flow.png'));
 });
 
 // Route 2: Initiate login
@@ -819,6 +1097,7 @@ function generateResultsHTML(results) {
           margin-bottom: 20px;
           box-shadow: 0 4px 6px rgba(0,0,0,0.1);
           border-left: 6px solid #4caf50;
+          position: relative;
         }
         .header h1 {
           color: #333;
@@ -826,6 +1105,26 @@ function generateResultsHTML(results) {
           display: flex;
           align-items: center;
           gap: 10px;
+        }
+        .header-auth-button {
+          position: absolute;
+          top: 30px;
+          right: 30px;
+          padding: 10px 20px;
+          background: white;
+          color: #667eea;
+          border: 2px solid #667eea;
+          border-radius: 6px;
+          font-weight: 600;
+          text-decoration: none;
+          transition: all 0.2s;
+          font-size: 14px;
+        }
+        .header-auth-button:hover {
+          background: #667eea;
+          color: white;
+          transform: translateY(-1px);
+          box-shadow: 0 2px 4px rgba(102, 126, 234, 0.3);
         }
         .success-icon {
           font-size: 36px;
@@ -1122,11 +1421,207 @@ function generateResultsHTML(results) {
         .progress-step.pending .progress-label {
           color: #999;
         }
+
+        /* Flow Diagram Styles */
+        .flow-diagram {
+          background: white;
+          padding: 30px;
+          border-radius: 10px;
+          margin-bottom: 20px;
+          box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        .flow-diagram h2 {
+          color: #333;
+          margin-bottom: 20px;
+        }
+        .flow-container {
+          position: relative;
+          display: inline-block;
+          width: 100%;
+        }
+        .flow-container img {
+          width: 100%;
+          height: auto;
+          display: block;
+        }
+        .flow-hotspot {
+          position: absolute;
+          width: 30px;
+          height: 30px;
+          border-radius: 50%;
+          cursor: pointer;
+          transition: all 0.3s;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          font-weight: bold;
+          color: white;
+          border: 2px solid white;
+          box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+        }
+        .flow-hotspot.success {
+          background: rgba(76, 175, 80, 0.7);
+        }
+        .flow-hotspot.success:hover {
+          transform: scale(1.3);
+          background: rgba(76, 175, 80, 0.9);
+          z-index: 10;
+        }
+        .flow-hotspot.error {
+          background: rgba(244, 67, 54, 0.7);
+          animation: pulse 2s infinite;
+        }
+        .flow-hotspot.error:hover {
+          transform: scale(1.3);
+          background: rgba(244, 67, 54, 0.9);
+          z-index: 10;
+        }
+        @keyframes pulse {
+          0%, 100% { transform: scale(1); }
+          50% { transform: scale(1.1); }
+        }
+
+        /* Modal Styles */
+        .modal {
+          display: none;
+          position: fixed;
+          z-index: 1000;
+          left: 0;
+          top: 0;
+          width: 100%;
+          height: 100%;
+          background: rgba(0,0,0,0.7);
+          overflow: auto;
+        }
+        .modal-content {
+          background: white;
+          margin: 50px auto;
+          padding: 0;
+          border-radius: 10px;
+          width: 90%;
+          max-width: 900px;
+          box-shadow: 0 8px 16px rgba(0,0,0,0.3);
+          max-height: 85vh;
+          overflow-y: auto;
+        }
+        .modal-header {
+          padding: 20px 30px;
+          color: white;
+          border-radius: 10px 10px 0 0;
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+        }
+        .modal-header.success {
+          background: #4caf50;
+        }
+        .modal-header.error {
+          background: #f44336;
+        }
+        .modal-header h2 {
+          margin: 0;
+          color: white;
+        }
+        .close {
+          color: white;
+          font-size: 32px;
+          font-weight: bold;
+          cursor: pointer;
+          line-height: 20px;
+        }
+        .close:hover {
+          opacity: 0.7;
+        }
+        .modal-body {
+          padding: 30px;
+        }
+        .token-section {
+          background: #f8f9fa;
+          padding: 15px;
+          border-radius: 6px;
+          margin-top: 15px;
+        }
+        .token-section h3 {
+          color: #495057;
+          font-size: 16px;
+          margin-bottom: 10px;
+          display: flex;
+          align-items: center;
+          gap: 8px;
+        }
+        .token-section h4 {
+          color: #495057;
+          font-size: 14px;
+          margin-top: 15px;
+          margin-bottom: 8px;
+        }
+        .token-section p {
+          color: #666;
+          line-height: 1.5;
+          font-size: 14px;
+        }
+        .copy-btn {
+          background: #007bff;
+          color: white;
+          border: none;
+          padding: 4px 12px;
+          border-radius: 4px;
+          cursor: pointer;
+          font-size: 12px;
+          transition: background 0.2s;
+        }
+        .copy-btn:hover {
+          background: #0056b3;
+        }
+        .token-display {
+          background: #fff;
+          padding: 12px;
+          border-radius: 4px;
+          border: 1px solid #dee2e6;
+          font-family: 'Courier New', monospace;
+          font-size: 12px;
+          word-break: break-all;
+          max-height: 100px;
+          overflow-y: auto;
+          margin-bottom: 10px;
+        }
+        .payload-display {
+          background: #fff;
+          padding: 12px;
+          border-radius: 4px;
+          border: 1px solid #dee2e6;
+        }
+        .payload-display pre {
+          margin: 0;
+          font-family: 'Courier New', monospace;
+          font-size: 12px;
+          white-space: pre-wrap;
+          word-break: break-word;
+        }
+        .error-details {
+          background: #fff3cd;
+          border-left: 4px solid #ffc107;
+          padding: 15px;
+          margin-top: 15px;
+          border-radius: 4px;
+        }
+        .error-details h3 {
+          color: #856404;
+          margin-bottom: 10px;
+        }
+        .error-details pre {
+          background: white;
+          padding: 10px;
+          border-radius: 4px;
+          overflow-x: auto;
+          font-size: 12px;
+        }
       </style>
     </head>
     <body>
       <div class="container">
         <div class="header">
+          <a href="/login" class="header-auth-button">Start Authentication</a>
           <h1>
             <span class="success-icon">✅</span>
             Access Granted Successfully
@@ -1185,6 +1680,29 @@ function generateResultsHTML(results) {
                   <div class="progress-label">Resource Access</div>
                 </div>
               </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Interactive Flow Diagram -->
+        <div class="flow-diagram">
+          <h2>📊 Interactive Flow Diagram</h2>
+          <p style="color: #666; margin-bottom: 20px;">Click on the numbered circles to view details for each step:</p>
+          <div class="flow-container" id="flowContainer">
+            <img src="/flow.png" alt="Authentication Flow" id="flowImage">
+            ${buildHotspots(false, null)}
+          </div>
+        </div>
+
+        <!-- Modal for showing step details -->
+        <div id="stepModal" class="modal">
+          <div class="modal-content">
+            <div class="modal-header success" id="modalHeader">
+              <h2 id="modalTitle">Step Details</h2>
+              <span class="close">&times;</span>
+            </div>
+            <div class="modal-body" id="modalBody">
+              <!-- Content will be injected here -->
             </div>
           </div>
         </div>
@@ -1354,8 +1872,54 @@ function generateResultsHTML(results) {
         
         <a href="/" class="back-button">← Start New Flow</a>
       </div>
-      
+
       <script>
+        // Step data for modal display
+        const stepData = ${buildStepDataJS(false, null, results)};
+
+        // Modal functionality
+        const modal = document.getElementById('stepModal');
+        const closeBtn = document.getElementsByClassName('close')[0];
+        const modalTitle = document.getElementById('modalTitle');
+        const modalBody = document.getElementById('modalBody');
+        const modalHeader = document.getElementById('modalHeader');
+
+        // Add click handlers to hotspots
+        for (let i = 1; i <= 6; i++) {
+          const hotspot = document.getElementById('hotspot' + i);
+          if (hotspot) {
+            hotspot.onclick = function() {
+              showStep(i);
+            };
+          }
+        }
+
+        function showStep(stepNum) {
+          const step = stepData[stepNum];
+          if (!step) return;
+          modalTitle.textContent = step.title;
+          modalBody.innerHTML = step.content;
+
+          // Change modal header color based on error state
+          if (step.isError) {
+            modalHeader.className = 'modal-header error';
+          } else {
+            modalHeader.className = 'modal-header success';
+          }
+
+          modal.style.display = 'block';
+        }
+
+        closeBtn.onclick = function() {
+          modal.style.display = 'none';
+        };
+
+        window.onclick = function(event) {
+          if (event.target == modal) {
+            modal.style.display = 'none';
+          }
+        };
+
         function copyToClipboard(text) {
           navigator.clipboard.writeText(text).then(() => {
             alert('Token copied to clipboard!');
@@ -1567,6 +2131,7 @@ function generateErrorHTML(results) {
           margin-bottom: 20px;
           box-shadow: 0 4px 6px rgba(0,0,0,0.1);
           border-left: 6px solid #f44336;
+          position: relative;
         }
         .error-header h1 {
           color: #333;
@@ -1574,6 +2139,26 @@ function generateErrorHTML(results) {
           display: flex;
           align-items: center;
           gap: 10px;
+        }
+        .error-header .header-auth-button {
+          position: absolute;
+          top: 30px;
+          right: 30px;
+          padding: 10px 20px;
+          background: white;
+          color: #667eea;
+          border: 2px solid #667eea;
+          border-radius: 6px;
+          font-weight: 600;
+          text-decoration: none;
+          transition: all 0.2s;
+          font-size: 14px;
+        }
+        .error-header .header-auth-button:hover {
+          background: #667eea;
+          color: white;
+          transform: translateY(-1px);
+          box-shadow: 0 2px 4px rgba(102, 126, 234, 0.3);
         }
         .error-icon {
           font-size: 36px;
@@ -1872,11 +2457,207 @@ function generateErrorHTML(results) {
         .progress-step.pending .progress-label {
           color: #999;
         }
+
+        /* Flow Diagram Styles */
+        .flow-diagram {
+          background: white;
+          padding: 30px;
+          border-radius: 10px;
+          margin-bottom: 20px;
+          box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        .flow-diagram h2 {
+          color: #333;
+          margin-bottom: 20px;
+        }
+        .flow-container {
+          position: relative;
+          display: inline-block;
+          width: 100%;
+        }
+        .flow-container img {
+          width: 100%;
+          height: auto;
+          display: block;
+        }
+        .flow-hotspot {
+          position: absolute;
+          width: 30px;
+          height: 30px;
+          border-radius: 50%;
+          cursor: pointer;
+          transition: all 0.3s;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          font-weight: bold;
+          color: white;
+          border: 2px solid white;
+          box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+        }
+        .flow-hotspot.success {
+          background: rgba(76, 175, 80, 0.7);
+        }
+        .flow-hotspot.success:hover {
+          transform: scale(1.3);
+          background: rgba(76, 175, 80, 0.9);
+          z-index: 10;
+        }
+        .flow-hotspot.error {
+          background: rgba(244, 67, 54, 0.7);
+          animation: pulse 2s infinite;
+        }
+        .flow-hotspot.error:hover {
+          transform: scale(1.3);
+          background: rgba(244, 67, 54, 0.9);
+          z-index: 10;
+        }
+        @keyframes pulse {
+          0%, 100% { transform: scale(1); }
+          50% { transform: scale(1.1); }
+        }
+
+        /* Modal Styles */
+        .modal {
+          display: none;
+          position: fixed;
+          z-index: 1000;
+          left: 0;
+          top: 0;
+          width: 100%;
+          height: 100%;
+          background: rgba(0,0,0,0.7);
+          overflow: auto;
+        }
+        .modal-content {
+          background: white;
+          margin: 50px auto;
+          padding: 0;
+          border-radius: 10px;
+          width: 90%;
+          max-width: 900px;
+          box-shadow: 0 8px 16px rgba(0,0,0,0.3);
+          max-height: 85vh;
+          overflow-y: auto;
+        }
+        .modal-header {
+          padding: 20px 30px;
+          color: white;
+          border-radius: 10px 10px 0 0;
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+        }
+        .modal-header.success {
+          background: #4caf50;
+        }
+        .modal-header.error {
+          background: #f44336;
+        }
+        .modal-header h2 {
+          margin: 0;
+          color: white;
+        }
+        .close {
+          color: white;
+          font-size: 32px;
+          font-weight: bold;
+          cursor: pointer;
+          line-height: 20px;
+        }
+        .close:hover {
+          opacity: 0.7;
+        }
+        .modal-body {
+          padding: 30px;
+        }
+        .token-section {
+          background: #f8f9fa;
+          padding: 15px;
+          border-radius: 6px;
+          margin-top: 15px;
+        }
+        .token-section h3 {
+          color: #495057;
+          font-size: 16px;
+          margin-bottom: 10px;
+          display: flex;
+          align-items: center;
+          gap: 8px;
+        }
+        .token-section h4 {
+          color: #495057;
+          font-size: 14px;
+          margin-top: 15px;
+          margin-bottom: 8px;
+        }
+        .token-section p {
+          color: #666;
+          line-height: 1.5;
+          font-size: 14px;
+        }
+        .copy-btn {
+          background: #007bff;
+          color: white;
+          border: none;
+          padding: 4px 12px;
+          border-radius: 4px;
+          cursor: pointer;
+          font-size: 12px;
+          transition: background 0.2s;
+        }
+        .copy-btn:hover {
+          background: #0056b3;
+        }
+        .token-display {
+          background: #fff;
+          padding: 12px;
+          border-radius: 4px;
+          border: 1px solid #dee2e6;
+          font-family: 'Courier New', monospace;
+          font-size: 12px;
+          word-break: break-all;
+          max-height: 100px;
+          overflow-y: auto;
+          margin-bottom: 10px;
+        }
+        .payload-display {
+          background: #fff;
+          padding: 12px;
+          border-radius: 4px;
+          border: 1px solid #dee2e6;
+        }
+        .payload-display pre {
+          margin: 0;
+          font-family: 'Courier New', monospace;
+          font-size: 12px;
+          white-space: pre-wrap;
+          word-break: break-word;
+        }
+        .error-details {
+          background: #fff3cd;
+          border-left: 4px solid #ffc107;
+          padding: 15px;
+          margin-top: 15px;
+          border-radius: 4px;
+        }
+        .error-details h3 {
+          color: #856404;
+          margin-bottom: 10px;
+        }
+        .error-details pre {
+          background: white;
+          padding: 10px;
+          border-radius: 4px;
+          overflow-x: auto;
+          font-size: 12px;
+        }
       </style>
     </head>
     <body>
       <div class="container">
         <div class="error-header">
+          <a href="/login" class="header-auth-button">Start Authentication</a>
           <h1>
             <span class="error-icon">${friendlyError.icon}</span>
             ${friendlyError.title}
@@ -1910,6 +2691,29 @@ function generateErrorHTML(results) {
           </div>
 
           ${progressHTML}
+        </div>
+
+        <!-- Interactive Flow Diagram -->
+        <div class="flow-diagram">
+          <h2>📊 Interactive Flow Diagram - Error at Step ${error.failedStep + 2}</h2>
+          <p style="color: #666; margin-bottom: 20px;">Green circles show successful steps. Click the red circle to view error details:</p>
+          <div class="flow-container" id="flowContainer">
+            <img src="/flow.png" alt="Authentication Flow" id="flowImage">
+            ${buildHotspots(true, error)}
+          </div>
+        </div>
+
+        <!-- Modal for showing step details -->
+        <div id="stepModal" class="modal">
+          <div class="modal-content">
+            <div class="modal-header error" id="modalHeader">
+              <h2 id="modalTitle">Step Details</h2>
+              <span class="close">&times;</span>
+            </div>
+            <div class="modal-body" id="modalBody">
+              <!-- Content will be injected here -->
+            </div>
+          </div>
         </div>
 
         <div class="timeline">
@@ -1958,6 +2762,52 @@ function generateErrorHTML(results) {
       </div>
 
       <script>
+        // Step data for modal display
+        const stepData = ${buildStepDataJS(true, error, results)};
+
+        // Modal functionality
+        const modal = document.getElementById('stepModal');
+        const closeBtn = document.getElementsByClassName('close')[0];
+        const modalTitle = document.getElementById('modalTitle');
+        const modalBody = document.getElementById('modalBody');
+        const modalHeader = document.getElementById('modalHeader');
+
+        // Add click handlers to hotspots
+        for (let i = 1; i <= 6; i++) {
+          const hotspot = document.getElementById('hotspot' + i);
+          if (hotspot) {
+            hotspot.onclick = function() {
+              showStep(i);
+            };
+          }
+        }
+
+        function showStep(stepNum) {
+          const step = stepData[stepNum];
+          if (!step) return;
+          modalTitle.textContent = step.title;
+          modalBody.innerHTML = step.content;
+
+          // Change modal header color based on error state
+          if (step.isError) {
+            modalHeader.className = 'modal-header error';
+          } else {
+            modalHeader.className = 'modal-header success';
+          }
+
+          modal.style.display = 'block';
+        }
+
+        closeBtn.onclick = function() {
+          modal.style.display = 'none';
+        };
+
+        window.onclick = function(event) {
+          if (event.target == modal) {
+            modal.style.display = 'none';
+          }
+        };
+
         function copyToClipboard(text) {
           navigator.clipboard.writeText(text).then(() => {
             alert('Token copied to clipboard!');
