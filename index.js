@@ -8,6 +8,9 @@ const { SignJWT } = require('jose');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// Serve static files (for flow.png)
+app.use(express.static('.'));
+
 // Configuration from .env
 const config = {
   // OIDC Client Configuration
@@ -73,6 +76,20 @@ function getHumanFriendlyError(httpStatus, failedStepName, errorDetails) {
           title: 'Invalid Token or Grant',
           description: `The ${failedStepName} failed because the provided token or grant was invalid or expired. This could indicate a misconfigured token exchange or an expired assertion.`,
           icon: '⏰'
+        };
+      }
+      if (errorDetails?.error === 'invalid_request' && failedStepName === 'Authorization Callback') {
+        return {
+          title: 'Authorization Callback Failed',
+          description: errorDetails.error_description || 'The authorization callback failed due to missing or invalid parameters. This typically happens when the authorization request is rejected or the session expires.',
+          icon: '⚠️'
+        };
+      }
+      if (errorDetails?.error === 'access_denied') {
+        return {
+          title: 'Access Denied',
+          description: 'The user or authorization server denied the authentication request. The user may have clicked "Cancel" or the request was rejected due to policy restrictions.',
+          icon: '🚫'
         };
       }
       return {
@@ -253,12 +270,7 @@ app.get('/', (req, res) => {
 app.get('/login', (req, res) => {
   const state = crypto.randomBytes(16).toString('hex');
   const pkce = generatePKCE();
-  
-  sessions.set(state, {
-    codeVerifier: pkce.verifier,
-    timestamp: Date.now()
-  });
-  
+
   const authParams = {
     client_id: config.clientId,
     response_type: 'code',
@@ -268,34 +280,166 @@ app.get('/login', (req, res) => {
     code_challenge: pkce.challenge,
     code_challenge_method: 'S256'
   };
-  
+
   const authUrl = `${config.issuer}/oauth2/v1/authorize?${querystring.stringify(authParams)}`;
-  
+
+  // Store authorization request details
+  sessions.set(state, {
+    codeVerifier: pkce.verifier,
+    timestamp: Date.now(),
+    authRequest: {
+      url: authUrl,
+      params: authParams,
+      timestamp: new Date().toISOString()
+    }
+  });
+
   console.log('\n[STEP 1] Redirecting to Okta authorization...');
   console.log(`Authorization URL: ${authUrl}`);
-  
+
   res.redirect(authUrl);
 });
 
 // Route 3: Handle callback and run complete flow
 app.get('/callback', async (req, res) => {
   const { code, state } = req.query;
-  
-  if (!code || !state) {
-    return res.status(400).send('Missing code or state parameter');
+
+  // Handle OAuth error responses from authorization server (check this FIRST before validating code/state)
+  if (req.query.error) {
+    // Get session if state exists
+    const session = state ? sessions.get(state) : null;
+
+    const results = {
+      steps: [],
+      tokens: {},
+      errors: [{
+        message: `Authorization failed: ${req.query.error}`,
+        details: {
+          error: req.query.error,
+          error_description: req.query.error_description || 'The authorization server rejected the request',
+          error_uri: req.query.error_uri || null
+        },
+        timestamp: new Date().toISOString(),
+        httpStatus: 400,
+        failedStep: 0,
+        failedStepName: 'Authorization Callback',
+        failedEndpoint: `${config.issuer}/oauth2/v1/authorize`,
+        request: null,
+        response: {
+          status: 400,
+          statusText: 'Bad Request',
+          data: {
+            error: req.query.error,
+            error_description: req.query.error_description || 'The authorization server rejected the request'
+          },
+          raw: `HTTP/1.1 302 Found
+Location: ${config.redirectUri}?error=${req.query.error}&error_description=${encodeURIComponent(req.query.error_description || '')}&state=${state || 'N/A'}
+
+OAuth Error Response:
+  error: ${req.query.error}
+  error_description: ${req.query.error_description || 'N/A'}`
+        }
+      }],
+      authRequest: session?.authRequest || {
+        url: `${config.issuer}/oauth2/v1/authorize`,
+        params: {},
+        timestamp: new Date().toISOString()
+      },
+      authResponse: {
+        error: req.query.error,
+        error_description: req.query.error_description,
+        state: state,
+        timestamp: new Date().toISOString()
+      }
+    };
+    console.error(`\n[ERROR] Authorization failed: ${req.query.error} - ${req.query.error_description}`);
+    if (state && session) {
+      sessions.delete(state);
+    }
+    return res.status(400).send(generateErrorHTML(results));
   }
-  
+
+  // Handle missing code or state parameter
+  if (!code || !state) {
+    const results = {
+      steps: [],
+      tokens: {},
+      errors: [{
+        message: 'Authorization callback failed: Missing required parameters',
+        details: {
+          error: 'invalid_request',
+          error_description: !code && !state ? 'Missing both code and state parameters' : !code ? 'Missing code parameter' : 'Missing state parameter'
+        },
+        timestamp: new Date().toISOString(),
+        httpStatus: 400,
+        failedStep: 0,
+        failedStepName: 'Authorization Callback',
+        failedEndpoint: `${config.issuer}/oauth2/v1/authorize`,
+        request: null,
+        response: null
+      }],
+      authRequest: {
+        url: `${config.issuer}/oauth2/v1/authorize`,
+        params: {},
+        timestamp: new Date().toISOString()
+      },
+      authResponse: {
+        code: code || 'MISSING',
+        state: state || 'MISSING',
+        timestamp: new Date().toISOString()
+      }
+    };
+    console.error('\n[ERROR] Authorization callback failed: Missing required parameters');
+    return res.status(400).send(generateErrorHTML(results));
+  }
+
+  // Handle invalid state parameter
   const session = sessions.get(state);
   if (!session) {
-    return res.status(400).send('Invalid state parameter');
+    const results = {
+      steps: [],
+      tokens: {},
+      errors: [{
+        message: 'Authorization callback failed: Invalid or expired state parameter',
+        details: {
+          error: 'invalid_request',
+          error_description: 'The state parameter is invalid or the session has expired. Please start the authentication flow again.'
+        },
+        timestamp: new Date().toISOString(),
+        httpStatus: 400,
+        failedStep: 0,
+        failedStepName: 'Authorization Callback',
+        failedEndpoint: `${config.issuer}/oauth2/v1/authorize`,
+        request: null,
+        response: null
+      }],
+      authRequest: {
+        url: `${config.issuer}/oauth2/v1/authorize`,
+        params: {},
+        timestamp: new Date().toISOString()
+      },
+      authResponse: {
+        code: code,
+        state: state,
+        timestamp: new Date().toISOString()
+      }
+    };
+    console.error('\n[ERROR] Authorization callback failed: Invalid state parameter');
+    return res.status(400).send(generateErrorHTML(results));
   }
-  
+
   const results = {
     steps: [],
     tokens: {},
-    errors: []
+    errors: [],
+    authRequest: session.authRequest,
+    authResponse: {
+      code: code,
+      state: state,
+      timestamp: new Date().toISOString()
+    }
   };
-  
+
   try {
     // ============================================
     // STEP 1: Exchange authorization code for ID token
@@ -746,6 +890,22 @@ function generateResultsHTML(results) {
   const finalScope = results.tokens.accessToken?.scope || 'N/A';
   const targetAudience = results.tokens.accessToken?.payload?.aud || 'N/A';
 
+  // Build the auth request display
+  const authHost = new URL(results.authRequest.url).host;
+  const authPath = new URL(results.authRequest.url).pathname + '?' + new URL(results.authRequest.url).search;
+  const authRequestDisplay = `GET ${authPath} HTTP/1.1
+Host: ${authHost}
+
+Parameters:
+${Object.entries(results.authRequest.params).map(([k, v]) => `  ${k}: ${v}`).join('\n')}`;
+
+  const authResponseDisplay = `HTTP/1.1 302 Found
+Location: ${config.redirectUri}?code=${results.authResponse.code}&state=${results.authResponse.state}
+
+Received Parameters:
+  code: ${results.authResponse.code}
+  state: ${results.authResponse.state}`;
+
   return `
     <!DOCTYPE html>
     <html>
@@ -764,7 +924,7 @@ function generateResultsHTML(results) {
           min-height: 100vh;
         }
         .container {
-          max-width: 1200px;
+          max-width: 1400px;
           margin: 0 auto;
         }
         .header {
@@ -811,6 +971,95 @@ function generateResultsHTML(results) {
           color: #155724;
           line-height: 1.5;
           font-size: 14px;
+        }
+        .flow-diagram {
+          background: white;
+          padding: 30px;
+          border-radius: 10px;
+          margin-bottom: 20px;
+          box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        .flow-diagram h2 {
+          color: #333;
+          margin-bottom: 20px;
+        }
+        .flow-container {
+          position: relative;
+          display: inline-block;
+          width: 100%;
+        }
+        .flow-container img {
+          width: 100%;
+          height: auto;
+          display: block;
+        }
+        .flow-hotspot {
+          position: absolute;
+          width: 30px;
+          height: 30px;
+          border-radius: 50%;
+          cursor: pointer;
+          transition: all 0.3s;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          font-weight: bold;
+          color: white;
+          background: rgba(0, 123, 255, 0.7);
+          border: 2px solid white;
+          box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+        }
+        .flow-hotspot:hover {
+          transform: scale(1.3);
+          background: rgba(0, 123, 255, 0.9);
+          z-index: 10;
+        }
+        .modal {
+          display: none;
+          position: fixed;
+          z-index: 1000;
+          left: 0;
+          top: 0;
+          width: 100%;
+          height: 100%;
+          background: rgba(0,0,0,0.7);
+          overflow: auto;
+        }
+        .modal-content {
+          background: white;
+          margin: 50px auto;
+          padding: 0;
+          border-radius: 10px;
+          width: 90%;
+          max-width: 900px;
+          box-shadow: 0 8px 16px rgba(0,0,0,0.3);
+          max-height: 85vh;
+          overflow-y: auto;
+        }
+        .modal-header {
+          padding: 20px 30px;
+          background: #007bff;
+          color: white;
+          border-radius: 10px 10px 0 0;
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+        }
+        .modal-header h2 {
+          margin: 0;
+        }
+        .close {
+          color: white;
+          font-size: 32px;
+          font-weight: bold;
+          cursor: pointer;
+          line-height: 20px;
+        }
+        .close:hover {
+          opacity: 0.7;
+        }
+        .modal-body {
+          padding: 30px;
         }
         .timeline {
           position: relative;
@@ -950,6 +1199,147 @@ function generateResultsHTML(results) {
           transform: translateY(-2px);
           box-shadow: 0 4px 8px rgba(0,0,0,0.2);
         }
+        .details-link {
+          display: inline-block;
+          margin-top: 20px;
+          margin-left: 10px;
+          padding: 12px 24px;
+          background: white;
+          color: #667eea;
+          text-decoration: none;
+          border-radius: 6px;
+          font-weight: bold;
+          transition: transform 0.2s;
+          cursor: pointer;
+          border: 2px solid #667eea;
+        }
+        .details-link:hover {
+          transform: translateY(-2px);
+          box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+        }
+        .timeline {
+          position: relative;
+          padding-left: 40px;
+          margin: 20px 0;
+        }
+        .timeline::before {
+          content: '';
+          position: absolute;
+          left: 15px;
+          top: 0;
+          bottom: 0;
+          width: 2px;
+          background: rgba(255,255,255,0.3);
+        }
+        .step {
+          background: white;
+          padding: 20px;
+          border-radius: 8px;
+          margin-bottom: 20px;
+          box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+          position: relative;
+        }
+        .step::before {
+          content: '✓';
+          position: absolute;
+          left: -32px;
+          top: 20px;
+          width: 30px;
+          height: 30px;
+          border-radius: 50%;
+          background: #4caf50;
+          color: white;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          font-weight: bold;
+          font-size: 16px;
+        }
+        .step h2 {
+          color: #333;
+          margin-bottom: 10px;
+          font-size: 20px;
+        }
+        .step-meta {
+          color: #666;
+          font-size: 13px;
+          margin-bottom: 15px;
+        }
+        .token-section {
+          background: #f8f9fa;
+          padding: 15px;
+          border-radius: 6px;
+          margin-top: 15px;
+        }
+        .token-section h3 {
+          color: #495057;
+          font-size: 16px;
+          margin-bottom: 10px;
+          display: flex;
+          align-items: center;
+          gap: 8px;
+        }
+        .copy-btn {
+          background: #007bff;
+          color: white;
+          border: none;
+          padding: 4px 12px;
+          border-radius: 4px;
+          cursor: pointer;
+          font-size: 12px;
+          transition: background 0.2s;
+        }
+        .copy-btn:hover {
+          background: #0056b3;
+        }
+        .token-display {
+          background: #fff;
+          padding: 12px;
+          border-radius: 4px;
+          border: 1px solid #dee2e6;
+          font-family: 'Courier New', monospace;
+          font-size: 12px;
+          word-break: break-all;
+          max-height: 100px;
+          overflow-y: auto;
+          margin-bottom: 10px;
+        }
+        .payload-display {
+          background: #fff;
+          padding: 12px;
+          border-radius: 4px;
+          border: 1px solid #dee2e6;
+          font-family: 'Courier New', monospace;
+          font-size: 11px;
+          max-height: 200px;
+          overflow-y: auto;
+        }
+        pre {
+          margin: 0;
+          white-space: pre-wrap;
+          word-wrap: break-word;
+        }
+        .metadata {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+          gap: 10px;
+          margin-top: 10px;
+        }
+        .metadata-item {
+          background: #e9ecef;
+          padding: 8px 12px;
+          border-radius: 4px;
+        }
+        .metadata-item strong {
+          color: #495057;
+          font-size: 12px;
+        }
+        .metadata-item span {
+          display: block;
+          color: #6c757d;
+          font-size: 11px;
+          margin-top: 3px;
+        }
       </style>
     </head>
     <body>
@@ -961,7 +1351,7 @@ function generateResultsHTML(results) {
           </h1>
           <span class="success-badge">Success</span>
 
-          <div class="success-description">            
+          <div class="success-description">
             <p>The full Cross App Access token exchange flow was successful. The user was authenticated via Okta by the application, the AI agent exchanged the ID token for a JAG-ID token, and finally received an access token from the MCP authorization server to access the protected resource.</p>
 
             <div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid #c3e6cb;">
@@ -987,7 +1377,56 @@ function generateResultsHTML(results) {
           </div>
         </div>
 
+        <div class="flow-diagram">
+          <h2>📊 Interactive Flow Diagram</h2>
+          <p style="color: #666; margin-bottom: 20px;">Click on the numbered circles to view details for each step:</p>
+          <div class="flow-container" id="flowContainer">
+            <img src="/flow.png" alt="Authentication Flow" id="flowImage">
+            <!-- Hotspots will be positioned dynamically -->
+            <div class="flow-hotspot" id="hotspot1" style="left: 12%; top: 31%;">1</div>
+            <div class="flow-hotspot" id="hotspot2" style="left: 12.4%; top: 55%;">2</div>
+            <div class="flow-hotspot" id="hotspot3" style="left: 23%; top: 73%;">3</div>
+            <div class="flow-hotspot" id="hotspot4" style="left: 28%; top: 73%;">4</div>
+            <div class="flow-hotspot" id="hotspot5" style="left: 32.5%; top: 73%;">5</div>
+            <div class="flow-hotspot" id="hotspot6" style="left: 37.2%; top: 81%;">6</div>
+          </div>
+        </div>
+
+        <!-- Modal for showing step details -->
+        <div id="stepModal" class="modal">
+          <div class="modal-content">
+            <div class="modal-header">
+              <h2 id="modalTitle">Step Details</h2>
+              <span class="close">&times;</span>
+            </div>
+            <div class="modal-body" id="modalBody">
+              <!-- Content will be injected here -->
+            </div>
+          </div>
+        </div>
+
+        <div id="detailedSteps" style="display: none;">
+        <h2 style="color: white; margin: 20px 0;">📋 Detailed Step-by-Step View</h2>
         <div class="timeline">
+          <!-- Step 0: Authorization Request/Response -->
+          <div class="step">
+            <h2>Step 0: Authorization Request & Response</h2>
+            <div class="step-meta">
+              Endpoint: ${config.issuer}/oauth2/v1/authorize<br>
+              Time: ${results.authRequest.timestamp}
+            </div>
+
+            <div class="token-section">
+              <h3>📤 Authorization Request</h3>
+              <div class="payload-display"><pre>${authRequestDisplay}</pre></div>
+            </div>
+
+            <div class="token-section">
+              <h3>📥 Authorization Response</h3>
+              <div class="payload-display"><pre>${authResponseDisplay}</pre></div>
+            </div>
+          </div>
+
           <!-- Step 1: ID Token -->
           <div class="step">
             <h2>Step 1: ID Token Acquired</h2>
@@ -1149,11 +1588,184 @@ function generateResultsHTML(results) {
             </div>
           </div>
         </div>
-        
+        </div>
+
         <a href="/" class="back-button">← Start New Flow</a>
+        <a onclick="toggleDetails()" class="details-link">📋 Toggle Detailed View</a>
       </div>
-      
+
       <script>
+        // Step data for modal display
+        const stepData = {
+          1: {
+            title: 'Step 1: Initiate OIDC Flow',
+            content: \`
+              <div class="token-section">
+                <h3>📤 Authorization Request</h3>
+                <div class="payload-display"><pre>${authRequestDisplay.replace(/`/g, '\\`')}</pre></div>
+              </div>
+              <div class="token-section">
+                <h3>📥 Authorization Response</h3>
+                <div class="payload-display"><pre>${authResponseDisplay.replace(/`/g, '\\`')}</pre></div>
+              </div>
+              <div class="token-section">
+                <h3>ℹ️ Description</h3>
+                <p>The browser initiates the OpenID Connect flow by redirecting to Okta's authorization endpoint. The user authenticates and Okta returns an authorization code.</p>
+              </div>
+            \`
+          },
+          2: {
+            title: 'Step 2: Code',
+            content: \`
+              <div class="token-section">
+                <h3>ℹ️ Description</h3>
+                <p>The OAuth client (requesting app) receives the authorization code from the browser and prepares to exchange it.</p>
+              </div>
+            \`
+          },
+          3: {
+            title: 'Step 3: Get ID Token',
+            content: \`
+              <div class="token-section">
+                <h3>📤 HTTP Request</h3>
+                <div class="payload-display"><pre>${results.steps[0].request.raw.replace(/`/g, '\\`')}</pre></div>
+              </div>
+              <div class="token-section">
+                <h3>📥 HTTP Response</h3>
+                <div class="payload-display"><pre>${results.steps[0].response.raw.replace(/`/g, '\\`')}</pre></div>
+              </div>
+              <div class="token-section">
+                <h3>🔑 ID Token</h3>
+                <button class="copy-btn" onclick="copyToClipboard('${results.tokens.idToken.token}')">Copy Token</button>
+                <div class="token-display">${results.tokens.idToken.token}</div>
+                <h3 style="margin-top: 15px;">📄 Decoded Payload</h3>
+                <div class="payload-display"><pre>${JSON.stringify(results.tokens.idToken.payload, null, 2).replace(/`/g, '\\`')}</pre></div>
+              </div>
+            \`
+          },
+          4: {
+            title: 'Step 4: Swap ID Token for ID-JAG',
+            content: \`
+              <div class="token-section">
+                <h3>📤 HTTP Request</h3>
+                <div class="payload-display"><pre>${results.steps[1].request.raw.replace(/`/g, '\\`')}</pre></div>
+              </div>
+              <div class="token-section">
+                <h3>📥 HTTP Response</h3>
+                <div class="payload-display"><pre>${results.steps[1].response.raw.replace(/`/g, '\\`')}</pre></div>
+              </div>
+              <div class="token-section">
+                <h3>🔐 JAG Client Assertion</h3>
+                <button class="copy-btn" onclick="copyToClipboard('${results.tokens.jagClientAssertion.token}')">Copy Token</button>
+                <div class="token-display">${results.tokens.jagClientAssertion.token}</div>
+                <div class="payload-display"><pre>${JSON.stringify(results.tokens.jagClientAssertion.payload, null, 2).replace(/`/g, '\\`')}</pre></div>
+              </div>
+              <div class="token-section">
+                <h3>🎫 JAG-ID Token</h3>
+                <button class="copy-btn" onclick="copyToClipboard('${results.tokens.jagToken.token}')">Copy Token</button>
+                <div class="token-display">${results.tokens.jagToken.token}</div>
+                <h3 style="margin-top: 15px;">📄 Decoded Payload</h3>
+                <div class="payload-display"><pre>${JSON.stringify(results.tokens.jagToken.payload, null, 2).replace(/`/g, '\\`')}</pre></div>
+              </div>
+            \`
+          },
+          5: {
+            title: 'Step 5: Swap ID-JAG for Token',
+            content: \`
+              <div class="token-section">
+                <h3>📤 HTTP Request</h3>
+                <div class="payload-display"><pre>${results.steps[2].request.raw.replace(/`/g, '\\`')}</pre></div>
+              </div>
+              <div class="token-section">
+                <h3>📥 HTTP Response</h3>
+                <div class="payload-display"><pre>${results.steps[2].response.raw.replace(/`/g, '\\`')}</pre></div>
+              </div>
+              <div class="token-section">
+                <h3>🔐 Resource Client Assertion</h3>
+                <button class="copy-btn" onclick="copyToClipboard('${results.tokens.resourceClientAssertion.token}')">Copy Token</button>
+                <div class="token-display">${results.tokens.resourceClientAssertion.token}</div>
+                <div class="payload-display"><pre>${JSON.stringify(results.tokens.resourceClientAssertion.payload, null, 2).replace(/`/g, '\\`')}</pre></div>
+              </div>
+              <div class="token-section">
+                <h3>✨ Final Access Token</h3>
+                <button class="copy-btn" onclick="copyToClipboard('${results.tokens.accessToken.token}')">Copy Token</button>
+                <div class="token-display">${results.tokens.accessToken.token}</div>
+                <h3 style="margin-top: 15px;">📄 Decoded Payload</h3>
+                <div class="payload-display"><pre>${JSON.stringify(results.tokens.accessToken.payload, null, 2).replace(/`/g, '\\`')}</pre></div>
+              </div>
+            \`
+          },
+          6: {
+            title: 'Step 6: Access APIs with Token',
+            content: \`
+              <div class="token-section">
+                <h3>ℹ️ Description</h3>
+                <p>The OAuth client can now use the access token to make authenticated requests to the Resource Server APIs.</p>
+              </div>
+              <div class="token-section">
+                <h3>✨ Access Token Details</h3>
+                <div class="metadata">
+                  <div class="metadata-item">
+                    <strong>Token Type</strong>
+                    <span>${results.tokens.accessToken.tokenType}</span>
+                  </div>
+                  <div class="metadata-item">
+                    <strong>Expires In</strong>
+                    <span>${results.tokens.accessToken.expiresIn} seconds</span>
+                  </div>
+                  <div class="metadata-item">
+                    <strong>Scope</strong>
+                    <span>${results.tokens.accessToken.scope}</span>
+                  </div>
+                  <div class="metadata-item">
+                    <strong>Issuer</strong>
+                    <span>${results.tokens.accessToken.payload.iss}</span>
+                  </div>
+                </div>
+              </div>
+            \`
+          }
+        };
+
+        // Modal functionality
+        const modal = document.getElementById('stepModal');
+        const closeBtn = document.getElementsByClassName('close')[0];
+        const modalTitle = document.getElementById('modalTitle');
+        const modalBody = document.getElementById('modalBody');
+
+        // Add click handlers to hotspots
+        for (let i = 1; i <= 6; i++) {
+          document.getElementById('hotspot' + i).onclick = function() {
+            showStep(i);
+          };
+        }
+
+        function showStep(stepNum) {
+          const step = stepData[stepNum];
+          modalTitle.textContent = step.title;
+          modalBody.innerHTML = step.content;
+          modal.style.display = 'block';
+        }
+
+        closeBtn.onclick = function() {
+          modal.style.display = 'none';
+        };
+
+        window.onclick = function(event) {
+          if (event.target == modal) {
+            modal.style.display = 'none';
+          }
+        };
+
+        function toggleDetails() {
+          const details = document.getElementById('detailedSteps');
+          if (details.style.display === 'none') {
+            details.style.display = 'block';
+          } else {
+            details.style.display = 'none';
+          }
+        }
+
         function copyToClipboard(text) {
           navigator.clipboard.writeText(text).then(() => {
             alert('Token copied to clipboard!');
@@ -1188,6 +1800,22 @@ function generateErrorHTML(results) {
     requestedScope = results.tokens.jagToken?.scope || 'N/A';
     requestedAudience = results.tokens.jagToken?.payload?.aud || 'N/A';
   }
+
+  // Build the auth request display
+  const authHost = new URL(results.authRequest.url).host;
+  const authPath = new URL(results.authRequest.url).pathname + '?' + new URL(results.authRequest.url).search;
+  const authRequestDisplay = `GET ${authPath} HTTP/1.1
+Host: ${authHost}
+
+Parameters:
+${Object.entries(results.authRequest.params).map(([k, v]) => `  ${k}: ${v}`).join('\n')}`;
+
+  const authResponseDisplay = `HTTP/1.1 302 Found
+Location: ${config.redirectUri}?code=${results.authResponse.code}&state=${results.authResponse.state}
+
+Received Parameters:
+  code: ${results.authResponse.code}
+  state: ${results.authResponse.state}`;
 
   // Build tokens section HTML showing all successfully acquired tokens
   let tokensHTML = '';
@@ -1237,7 +1865,7 @@ function generateErrorHTML(results) {
 
         <div class="token-section">
           <h3>
-            🎫 JAG-ID Token
+            🔐 JAG-ID Token
             <button class="copy-btn" onclick="copyToClipboard('${results.tokens.jagToken.token}')">Copy</button>
           </h3>
           <div class="token-display">${results.tokens.jagToken.token}</div>
@@ -1267,7 +1895,7 @@ function generateErrorHTML(results) {
           min-height: 100vh;
         }
         .container {
-          max-width: 1200px;
+          max-width: 1400px;
           margin: 0 auto;
         }
         .error-header {
@@ -1314,6 +1942,115 @@ function generateErrorHTML(results) {
           color: #856404;
           line-height: 1.5;
           font-size: 14px;
+        }
+        .flow-diagram {
+          background: white;
+          padding: 30px;
+          border-radius: 10px;
+          margin-bottom: 20px;
+          box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        .flow-diagram h2 {
+          color: #333;
+          margin-bottom: 20px;
+        }
+        .flow-container {
+          position: relative;
+          display: inline-block;
+          width: 100%;
+        }
+        .flow-container img {
+          width: 100%;
+          height: auto;
+          display: block;
+        }
+        .flow-hotspot {
+          position: absolute;
+          width: 30px;
+          height: 30px;
+          border-radius: 50%;
+          cursor: pointer;
+          transition: all 0.3s;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          font-weight: bold;
+          color: white;
+          border: 2px solid white;
+          box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+        }
+        .flow-hotspot.success {
+          background: rgba(76, 175, 80, 0.7);
+        }
+        .flow-hotspot.success:hover {
+          transform: scale(1.3);
+          background: rgba(76, 175, 80, 0.9);
+          z-index: 10;
+        }
+        .flow-hotspot.error {
+          background: rgba(244, 67, 54, 0.7);
+          animation: pulse 2s infinite;
+        }
+        .flow-hotspot.error:hover {
+          transform: scale(1.3);
+          background: rgba(244, 67, 54, 0.9);
+          z-index: 10;
+        }
+        @keyframes pulse {
+          0%, 100% { transform: scale(1); }
+          50% { transform: scale(1.1); }
+        }
+        .modal {
+          display: none;
+          position: fixed;
+          z-index: 1000;
+          left: 0;
+          top: 0;
+          width: 100%;
+          height: 100%;
+          background: rgba(0,0,0,0.7);
+          overflow: auto;
+        }
+        .modal-content {
+          background: white;
+          margin: 50px auto;
+          padding: 0;
+          border-radius: 10px;
+          width: 90%;
+          max-width: 900px;
+          box-shadow: 0 8px 16px rgba(0,0,0,0.3);
+          max-height: 85vh;
+          overflow-y: auto;
+        }
+        .modal-header {
+          padding: 20px 30px;
+          color: white;
+          border-radius: 10px 10px 0 0;
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+        }
+        .modal-header.success {
+          background: #4caf50;
+        }
+        .modal-header.error {
+          background: #f44336;
+        }
+        .modal-header h2 {
+          margin: 0;
+        }
+        .close {
+          color: white;
+          font-size: 32px;
+          font-weight: bold;
+          cursor: pointer;
+          line-height: 20px;
+        }
+        .close:hover {
+          opacity: 0.7;
+        }
+        .modal-body {
+          padding: 30px;
         }
         .timeline {
           position: relative;
@@ -1381,6 +2118,17 @@ function generateErrorHTML(results) {
           align-items: center;
           gap: 8px;
         }
+        .token-section h4 {
+          color: #495057;
+          font-size: 14px;
+          margin-top: 15px;
+          margin-bottom: 8px;
+        }
+        .token-section p {
+          color: #666;
+          line-height: 1.5;
+          font-size: 14px;
+        }
         .copy-btn {
           background: #007bff;
           color: white;
@@ -1417,15 +2165,22 @@ function generateErrorHTML(results) {
           overflow-y: auto;
         }
         .error-details {
-          background: #f8f9fa;
+          background: #ffe6e6;
+          border: 1px solid #ffcccc;
           padding: 15px;
           border-radius: 6px;
           margin-top: 15px;
         }
         .error-details h3 {
-          color: #495057;
+          color: #c62828;
           font-size: 16px;
           margin-bottom: 10px;
+        }
+        .error-details h4 {
+          color: #c62828;
+          font-size: 14px;
+          margin-top: 15px;
+          margin-bottom: 8px;
         }
         pre {
           margin: 0;
@@ -1452,6 +2207,24 @@ function generateErrorHTML(results) {
           transition: transform 0.2s;
         }
         .back-button:hover {
+          transform: translateY(-2px);
+          box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+        }
+        .details-link {
+          display: inline-block;
+          margin-top: 20px;
+          margin-left: 10px;
+          padding: 12px 24px;
+          background: white;
+          color: #667eea;
+          text-decoration: none;
+          border-radius: 6px;
+          font-weight: bold;
+          transition: transform 0.2s;
+          cursor: pointer;
+          border: 2px solid #667eea;
+        }
+        .details-link:hover {
           transform: translateY(-2px);
           box-shadow: 0 4px 8px rgba(0,0,0,0.2);
         }
@@ -1493,6 +2266,45 @@ function generateErrorHTML(results) {
           </div>
         </div>
 
+        <div class="flow-diagram">
+          <h2>📊 Interactive Flow Diagram - ${error.failedStep === 0 ? 'Authorization Failed' : `Error at Step ${error.failedStep}`}</h2>
+          <p style="color: #666; margin-bottom: 20px;">${error.failedStep === 0 ? 'Click the red circle to view error details:' : 'Green circles show successful steps. Click the red circle to view error details:'}</p>
+          <div class="flow-container" id="flowContainer">
+            <img src="/flow.png" alt="Authentication Flow" id="flowImage">
+            <!-- Hotspots - green for success, red for failure, hidden for steps after failure -->
+            ${error.failedStep === 0 ? `
+              <!-- Callback/Authorization error - show only hotspot 1 as error -->
+              <div class="flow-hotspot error" id="hotspot1" style="left: 12%; top: 31%;">1</div>
+            ` : `
+              <!-- Hotspots 1-2: Show as green (authorization flow succeeded to reach callback) -->
+              <div class="flow-hotspot success" id="hotspot1" style="left: 12%; top: 31%;">1</div>
+              <div class="flow-hotspot success" id="hotspot2" style="left: 12.4%; top: 55%;">2</div>
+              <!-- Hotspot 3: Get ID Token (failedStep 1) -->
+              <div class="flow-hotspot ${error.failedStep === 1 ? 'error' : 'success'}" id="hotspot3" style="left: 23%; top: 73%;">3</div>
+              <!-- Hotspot 4: Swap ID Token for ID-JAG (failedStep 2) - only show if failedStep >= 2 -->
+              ${error.failedStep >= 2 ? `<div class="flow-hotspot ${error.failedStep === 2 ? 'error' : 'success'}" id="hotspot4" style="left: 28%; top: 73%;">4</div>` : ''}
+              <!-- Hotspot 5: Swap ID-JAG for Token (failedStep 3) - only show if failedStep >= 3 -->
+              ${error.failedStep >= 3 ? `<div class="flow-hotspot error" id="hotspot5" style="left: 32.5%; top: 73%;">5</div>` : ''}
+            `}
+            <!-- Hotspot 6: Always hidden in error state -->
+          </div>
+        </div>
+
+        <!-- Modal for showing step details -->
+        <div id="stepModal" class="modal">
+          <div class="modal-content">
+            <div class="modal-header" id="modalHeader">
+              <h2 id="modalTitle">Step Details</h2>
+              <span class="close">&times;</span>
+            </div>
+            <div class="modal-body" id="modalBody">
+              <!-- Content will be injected here -->
+            </div>
+          </div>
+        </div>
+
+        <div id="detailedSteps" style="display: none;">
+        <h2 style="color: white; margin: 20px 0;">📋 Detailed Step-by-Step View</h2>
         <div class="timeline">
           ${tokensHTML}
 
@@ -1524,11 +2336,251 @@ function generateErrorHTML(results) {
             `}
           </div>
         </div>
+        </div>
 
         <a href="/" class="back-button">← Start New Flow</a>
+        <a onclick="toggleDetails()" class="details-link">📋 Toggle Detailed View</a>
       </div>
 
       <script>
+        // Step data for modal display
+        const stepData = {
+          1: {
+            title: 'Step 1: Initiate OIDC Flow',
+            isError: ${error.failedStep === 0},
+            content: \`
+              ${error.failedStep === 0 ? `
+                <div class="error-details">
+                  <h3>❌ Authorization Failed</h3>
+                  <p><strong>Error:</strong> ${error.details.error}</p>
+                  <p><strong>Description:</strong> ${error.details.error_description}</p>
+                  ${error.response ? `
+                    <h4 style="margin-top: 15px;">📥 Error Response</h4>
+                    <pre>${error.response.raw.replace(/`/g, '\\`')}</pre>
+                  ` : ''}
+                </div>
+                <div class="token-section" style="margin-top: 15px;">
+                  <h3>ℹ️ What Happened</h3>
+                  <p>The authorization request to Okta failed or returned an error. This occurred before any tokens could be exchanged. Common causes include:</p>
+                  <ul style="margin-left: 20px; margin-top: 10px;">
+                    <li>Missing or invalid callback parameters</li>
+                    <li>User denied consent</li>
+                    <li>Session expired or invalid state</li>
+                    <li>Client configuration issues</li>
+                  </ul>
+                </div>
+              ` : `
+                <div class="token-section">
+                  <h3>📤 Authorization Request</h3>
+                  <div class="payload-display"><pre>${authRequestDisplay.replace(/`/g, '\\`')}</pre></div>
+                </div>
+                <div class="token-section">
+                  <h3>📥 Authorization Response</h3>
+                  <div class="payload-display"><pre>${authResponseDisplay.replace(/`/g, '\\`')}</pre></div>
+                </div>
+                <div class="token-section">
+                  <h3>ℹ️ Description</h3>
+                  <p>The browser initiates the OpenID Connect flow by redirecting to Okta's authorization endpoint. The user authenticates and Okta returns an authorization code.</p>
+                </div>
+              `}
+            \`
+          },
+          2: {
+            title: 'Step 2: Code',
+            isError: false,
+            content: \`
+              <div class="token-section">
+                <h3>ℹ️ Description</h3>
+                <p>The OAuth client (requesting app) receives the authorization code from the browser and prepares to exchange it.</p>
+              </div>
+            \`
+          },
+          3: {
+            title: 'Step 3: Get ID Token',
+            isError: ${error.failedStep === 1},
+            content: \`
+              ${results.tokens.idToken ? `
+                <div class="token-section">
+                  <h3>📤 HTTP Request</h3>
+                  <div class="payload-display"><pre>${results.steps[0].request.raw.replace(/`/g, '\\`')}</pre></div>
+                </div>
+                <div class="token-section">
+                  <h3>📥 HTTP Response</h3>
+                  <div class="payload-display"><pre>${results.steps[0].response.raw.replace(/`/g, '\\`')}</pre></div>
+                </div>
+                <div class="token-section">
+                  <h3>🔑 ID Token</h3>
+                  <button class="copy-btn" onclick="copyToClipboard('${results.tokens.idToken.token}')">Copy Token</button>
+                  <div class="token-display">${results.tokens.idToken.token}</div>
+                  <h3 style="margin-top: 15px;">📄 Decoded Payload</h3>
+                  <div class="payload-display"><pre>${JSON.stringify(results.tokens.idToken.payload, null, 2).replace(/`/g, '\\`')}</pre></div>
+                </div>
+              ` : `
+                <div class="error-details">
+                  <h3>❌ Failed to acquire ID Token</h3>
+                  ${error.request ? `
+                    <h4 style="margin-top: 15px;">📤 HTTP Request (Failed)</h4>
+                    <pre>${error.request.raw.replace(/`/g, '\\`')}</pre>
+                  ` : ''}
+                  ${error.response ? `
+                    <h4 style="margin-top: 15px;">📥 Error Response (HTTP ${error.response.status})</h4>
+                    <pre>${error.response.raw.replace(/`/g, '\\`')}</pre>
+                  ` : `
+                    <pre>${error.message}</pre>
+                  `}
+                </div>
+              `}
+            \`
+          },
+          4: {
+            title: 'Step 4: Swap ID Token for ID-JAG',
+            isError: ${error.failedStep === 2},
+            content: \`
+              ${results.tokens.jagToken ? `
+                <div class="token-section">
+                  <h3>📤 HTTP Request</h3>
+                  <div class="payload-display"><pre>${results.steps[1].request.raw.replace(/`/g, '\\`')}</pre></div>
+                </div>
+                <div class="token-section">
+                  <h3>📥 HTTP Response</h3>
+                  <div class="payload-display"><pre>${results.steps[1].response.raw.replace(/`/g, '\\`')}</pre></div>
+                </div>
+                <div class="token-section">
+                  <h3>🔐 JAG Client Assertion</h3>
+                  <button class="copy-btn" onclick="copyToClipboard('${results.tokens.jagClientAssertion.token}')">Copy Token</button>
+                  <div class="token-display">${results.tokens.jagClientAssertion.token}</div>
+                  <div class="payload-display"><pre>${JSON.stringify(results.tokens.jagClientAssertion.payload, null, 2).replace(/`/g, '\\`')}</pre></div>
+                </div>
+                <div class="token-section">
+                  <h3>🎫 JAG-ID Token</h3>
+                  <button class="copy-btn" onclick="copyToClipboard('${results.tokens.jagToken.token}')">Copy Token</button>
+                  <div class="token-display">${results.tokens.jagToken.token}</div>
+                  <h3 style="margin-top: 15px;">📄 Decoded Payload</h3>
+                  <div class="payload-display"><pre>${JSON.stringify(results.tokens.jagToken.payload, null, 2).replace(/`/g, '\\`')}</pre></div>
+                </div>
+              ` : `
+                <div class="error-details">
+                  <h3>❌ Failed to acquire JAG-ID Token</h3>
+                  ${error.request ? `
+                    <h4 style="margin-top: 15px;">📤 HTTP Request (Failed)</h4>
+                    <pre>${error.request.raw.replace(/`/g, '\\`')}</pre>
+                  ` : ''}
+                  ${error.response ? `
+                    <h4 style="margin-top: 15px;">📥 Error Response (HTTP ${error.response.status})</h4>
+                    <pre>${error.response.raw.replace(/`/g, '\\`')}</pre>
+                  ` : `
+                    <pre>${error.message}</pre>
+                  `}
+                </div>
+              `}
+            \`
+          },
+          5: {
+            title: 'Step 5: Swap ID-JAG for Token',
+            isError: ${error.failedStep === 3},
+            content: \`
+              ${results.tokens.accessToken ? `
+                <div class="token-section">
+                  <h3>📤 HTTP Request</h3>
+                  <div class="payload-display"><pre>${results.steps[2].request.raw.replace(/`/g, '\\`')}</pre></div>
+                </div>
+                <div class="token-section">
+                  <h3>📥 HTTP Response</h3>
+                  <div class="payload-display"><pre>${results.steps[2].response.raw.replace(/`/g, '\\`')}</pre></div>
+                </div>
+                <div class="token-section">
+                  <h3>🔐 Resource Client Assertion</h3>
+                  <button class="copy-btn" onclick="copyToClipboard('${results.tokens.resourceClientAssertion.token}')">Copy Token</button>
+                  <div class="token-display">${results.tokens.resourceClientAssertion.token}</div>
+                  <div class="payload-display"><pre>${JSON.stringify(results.tokens.resourceClientAssertion.payload, null, 2).replace(/`/g, '\\`')}</pre></div>
+                </div>
+                <div class="token-section">
+                  <h3>✨ Final Access Token</h3>
+                  <button class="copy-btn" onclick="copyToClipboard('${results.tokens.accessToken.token}')">Copy Token</button>
+                  <div class="token-display">${results.tokens.accessToken.token}</div>
+                  <h3 style="margin-top: 15px;">📄 Decoded Payload</h3>
+                  <div class="payload-display"><pre>${JSON.stringify(results.tokens.accessToken.payload, null, 2).replace(/`/g, '\\`')}</pre></div>
+                </div>
+              ` : `
+                <div class="error-details">
+                  <h3>❌ Failed to acquire Access Token</h3>
+                  ${error.request ? `
+                    <h4 style="margin-top: 15px;">📤 HTTP Request (Failed)</h4>
+                    <pre>${error.request.raw.replace(/`/g, '\\`')}</pre>
+                  ` : ''}
+                  ${error.response ? `
+                    <h4 style="margin-top: 15px;">📥 Error Response (HTTP ${error.response.status})</h4>
+                    <pre>${error.response.raw.replace(/`/g, '\\`')}</pre>
+                  ` : `
+                    <pre>${error.message}</pre>
+                  `}
+                </div>
+              `}
+            \`
+          },
+          6: {
+            title: 'Step 6: Access APIs with Token',
+            isError: true,
+            content: \`
+              <div class="token-section">
+                <h3>❌ Access Denied</h3>
+                <p>The flow did not complete successfully. The OAuth client cannot access the Resource Server APIs because the access token was not acquired.</p>
+              </div>
+            \`
+          }
+        };
+
+        // Modal functionality
+        const modal = document.getElementById('stepModal');
+        const closeBtn = document.getElementsByClassName('close')[0];
+        const modalTitle = document.getElementById('modalTitle');
+        const modalBody = document.getElementById('modalBody');
+        const modalHeader = document.getElementById('modalHeader');
+
+        // Add click handlers to hotspots (only for hotspots that exist)
+        for (let i = 1; i <= 6; i++) {
+          const hotspot = document.getElementById('hotspot' + i);
+          if (hotspot) {
+            hotspot.onclick = function() {
+              showStep(i);
+            };
+          }
+        }
+
+        function showStep(stepNum) {
+          const step = stepData[stepNum];
+          modalTitle.textContent = step.title;
+          modalBody.innerHTML = step.content;
+
+          // Change modal header color based on error state
+          if (step.isError) {
+            modalHeader.className = 'modal-header error';
+          } else {
+            modalHeader.className = 'modal-header success';
+          }
+
+          modal.style.display = 'block';
+        }
+
+        closeBtn.onclick = function() {
+          modal.style.display = 'none';
+        };
+
+        window.onclick = function(event) {
+          if (event.target == modal) {
+            modal.style.display = 'none';
+          }
+        };
+
+        function toggleDetails() {
+          const details = document.getElementById('detailedSteps');
+          if (details.style.display === 'none') {
+            details.style.display = 'block';
+          } else {
+            details.style.display = 'none';
+          }
+        }
+
         function copyToClipboard(text) {
           navigator.clipboard.writeText(text).then(() => {
             alert('Token copied to clipboard!');
