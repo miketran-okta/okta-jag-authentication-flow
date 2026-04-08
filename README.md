@@ -55,10 +55,11 @@ Before running the demo, configure your Okta org with the following components:
 3. **Configure a Custom Authorization Server** (for the resource)
    - Go to **Security** > **API** > **Authorization Servers**
    - Create or use an existing custom authorization server
+   - Provide audience with **api://** protocol ie api://cross-app-access
    - Configure an access policy:
      - Assign the policy to the **AI Agent** (not the OIDC app)
      - Add a rule with **JWT Bearer** grant type enabled
-     - Add OAuth scopes ie ai_agent
+     - Add OAuth scopes per .env file **ie ai_agent**
    - 📚 [Connect an AI agent to an authorization server](https://help.okta.com/oie/en-us/content/topics/ai-agents/ai-agent-auth-server.htm)
    - Note the Authorization Server ID and token endpoint
 
